@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload build diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: YanGou-build-diagnostics
           path: |
@@ -69,7 +69,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: YanGou-Windows-x64
           path: release/YanGou-Setup-*.exe
