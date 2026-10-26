@@ -32,7 +32,7 @@
     "desktop": "electron .",
     "desktop:dev": "electron . --dev",
     "desktop:smoke": "electron . --smoke-test",
-    "dist:win": "pnpm build && electron-builder --win nsis --x64",
+    "dist:win": "pnpm build && electron-builder --win nsis --x64 --publish never",
     "icon": "node scripts/make-icon.mjs",
     "build": "vite build",
     "start": "node server/index.mjs",
