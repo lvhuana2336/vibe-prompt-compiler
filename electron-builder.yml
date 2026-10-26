@@ -1,0 +1,35 @@
+appId: com.yangou.promptcompiler
+productName: 言构
+artifactName: "YanGou-Setup-${version}.${ext}"
+asar: true
+copyright: "Copyright © 2026 YanGou"
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - server/**/*
+  - electron/**/*
+  - build/icon.ico
+  - package.json
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: 言构
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  deleteAppDataOnUninstall: false
