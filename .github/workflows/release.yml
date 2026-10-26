@@ -43,7 +43,30 @@ jobs:
         run: pnpm test
 
       - name: Build installer
-        run: pnpm dist:win
+        shell: pwsh
+        env:
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}\electron-builder-cache
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          $env:TEMP = Join-Path $env:RUNNER_TEMP "yan-gou-temp"
+          $env:TMP = $env:TEMP
+          New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+          New-Item -ItemType Directory -Force -Path $env:ELECTRON_BUILDER_CACHE | Out-Null
+          pnpm dist:win 2>&1 | Tee-Object -FilePath release-build.log
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: YanGou-build-diagnostics
+          path: |
+            release-build.log
+            release/builder-debug.yml
+            release/**/*.log
+          if-no-files-found: ignore
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
