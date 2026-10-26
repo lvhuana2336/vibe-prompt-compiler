@@ -18,6 +18,14 @@
   "engines": {
     "node": ">=22.12.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lvhuana2336/vibe-prompt-compiler.git"
+  },
+  "homepage": "https://github.com/lvhuana2336/vibe-prompt-compiler#readme",
+  "bugs": {
+    "url": "https://github.com/lvhuana2336/vibe-prompt-compiler/issues"
+  },
   "main": "electron/main.mjs",
   "scripts": {
     "dev": "node server/index.mjs --dev",

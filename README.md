@@ -2,7 +2,7 @@
 
 > 把模糊想法编译成能落地的开发指令。
 
-![CI](https://img.shields.io/badge/CI-GitHub%20Actions-1b1d18)
+[![CI](https://github.com/lvhuana2336/vibe-prompt-compiler/actions/workflows/ci.yml/badge.svg)](https://github.com/lvhuana2336/vibe-prompt-compiler/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-d8ff63)
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64-1b1d18)
 ![React](https://img.shields.io/badge/React-19-1b1d18)
@@ -62,6 +62,11 @@ flowchart LR
 
 - Node.js 22.12 或更高版本
 - pnpm 11
+
+```powershell
+git clone https://github.com/lvhuana2336/vibe-prompt-compiler.git
+cd vibe-prompt-compiler
+```
 
 ```powershell
 pnpm install
