@@ -70,6 +70,10 @@ export function loadEnvironment(root) {
 export async function startLocalServer({ root, isDev = false, port = 0 }) {
   const app = express();
   app.disable("x-powered-by");
+  app.use((_request, response, next) => {
+    response.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+    next();
+  });
   app.use(express.json({ limit: "1mb" }));
 
   app.get("/api/health", (_request, response) => {
@@ -130,8 +134,8 @@ export async function startLocalServer({ root, isDev = false, port = 0 }) {
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(root, "dist")));
-    app.get("*", (_request, response) => {
-      response.sendFile(path.join(root, "dist", "index.html"));
+    app.get(/.*/, (_request, response) => {
+      response.sendFile("index.html", { root: path.join(root, "dist") });
     });
   }
 
