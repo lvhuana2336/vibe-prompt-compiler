@@ -12,6 +12,7 @@ files:
   - dist/**/*
   - server/**/*
   - electron/**/*
+  - shared/**/*
   - build/icon.ico
   - package.json
 

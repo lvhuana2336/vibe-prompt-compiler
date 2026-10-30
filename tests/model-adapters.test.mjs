@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callProvider } from "../server/model-adapters.mjs";
+import { callProvider, probeProvider } from "../server/model-adapters.mjs";
 
 function jsonResponse(data) {
   return new Response(JSON.stringify(data), {
@@ -126,4 +126,90 @@ test("Gemini 适配器把密钥放入查询参数并解析候选内容", async (
   });
 
   assert.equal(output.result.title, "Gemini 结果");
+});
+
+test("OpenAI-compatible 探测使用 /models 且不消耗生成请求", async (t) => {
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(url, "https://newapi.example.com/v1/models");
+    assert.equal(options.headers.Authorization, "Bearer relay-key");
+    return jsonResponse({
+      data: [{ id: "gpt-5-mini" }, { id: "deepseek-chat" }],
+    });
+  });
+
+  const output = await probeProvider({
+    config: {
+      providerId: "dragonapi",
+      kind: "openai-auto",
+      baseUrl: "https://newapi.example.com/",
+      model: "gpt-5-mini",
+      apiKey: "relay-key",
+    },
+  });
+
+  assert.deepEqual(output.result.models, ["gpt-5-mini", "deepseek-chat"]);
+  assert.equal(output.endpoint, "https://newapi.example.com/v1/models");
+  assert.equal(output.correctedBaseUrl, "https://newapi.example.com/v1");
+});
+
+test("Auto 协议在 Chat 路径不存在时回退 Responses", async (t) => {
+  let call = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    call += 1;
+    if (call === 1) {
+      return new Response(JSON.stringify({ error: { message: "not found" } }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return jsonResponse({
+      output: [
+        {
+          content: [{ type: "output_text", text: '{"title":"Responses 回退"}' }],
+        },
+      ],
+    });
+  });
+
+  const output = await callProvider({
+    config: {
+      providerId: "custom",
+      kind: "openai-auto",
+      baseUrl: "https://relay.example.com/v1",
+      model: "gpt-test",
+      apiKey: "relay-key",
+    },
+    system: "system",
+    user: "user",
+  });
+
+  assert.equal(output.result.title, "Responses 回退");
+  assert.equal(output.fallback, true);
+  assert.equal(output.protocolUsed, "responses");
+  assert.equal(call, 2);
+});
+
+test("200 网页不会被误判为模型连接成功", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    new Response("<!doctype html><title>New API</title>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    }),
+  );
+
+  await assert.rejects(
+    () =>
+      callProvider({
+        config: {
+          providerId: "custom",
+          kind: "openai-chat",
+          baseUrl: "https://relay.example.com/responses",
+          model: "gpt-test",
+          apiKey: "relay-key",
+        },
+        system: "system",
+        user: "user",
+      }),
+    /网页而不是 JSON/,
+  );
 });

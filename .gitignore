@@ -7,3 +7,6 @@ artifacts
 release
 .codex-temp
 .electron-builder-cache
+android/.gradle
+android/local.properties
+android/app/build

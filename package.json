@@ -1,9 +1,9 @@
 {
   "name": "yan-gou-vibe-prompt-compiler",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "把自然语言需求编译成可执行 vibecoding 提示词的 Windows 桌面应用",
+  "description": "把自然语言需求编译成可执行 vibecoding 提示词的 Windows 与 Android PWA 应用",
   "author": "YanGou",
   "license": "MIT",
   "keywords": [
@@ -12,6 +12,8 @@
     "ai-coding",
     "electron",
     "react",
+    "android",
+    "pwa",
     "codex",
     "claude-code"
   ],
@@ -34,18 +36,24 @@
     "desktop:smoke": "electron . --smoke-test",
     "dist:win": "pnpm build && electron-builder --win nsis --x64 --publish never",
     "icon": "node scripts/make-icon.mjs",
+    "pwa:icons": "node scripts/make-pwa-icons.mjs",
+    "android:sync": "pnpm build && cap sync android",
+    "android:open": "cap open android",
     "build": "vite build",
     "start": "node server/index.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:visual": "node scripts/visual-check.mjs"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
     "express": "5.3.0",
     "lucide-react": "^1.61.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.0",
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "^45.0.0",
     "electron-builder": "^26.18.0",

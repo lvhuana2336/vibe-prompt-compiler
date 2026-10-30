@@ -10,8 +10,10 @@ import {
   Clock3,
   Copy,
   Download,
+  DownloadCloud,
   Eye,
   EyeOff,
+  ExternalLink,
   FileCode2,
   Gauge,
   History,
@@ -20,6 +22,7 @@ import {
   LoaderCircle,
   Menu,
   Plus,
+  RefreshCw,
   RotateCw,
   Settings2,
   ShieldCheck,
@@ -41,11 +44,24 @@ import {
   getPromptForTab,
   mergeAiResult,
 } from "./lib/compiler.js";
+import {
+  describeProtocol,
+  isOpenAICompatibleKind,
+  normalizeOpenAIEndpoint,
+  previewProviderEndpoint,
+} from "../shared/provider-endpoints.mjs";
+import {
+  apiUrl,
+  isNativeAndroid,
+  platformLabel,
+  remoteApiBaseUrl,
+} from "./lib/platform.js";
 
 const STORAGE_KEYS = {
   providerConfigs: "yangou.provider.configs.v1",
   providerId: "yangou.provider.id.v1",
   history: "yangou.history.v1",
+  autoCheckUpdates: "yangou.updates.auto.v1",
 };
 
 const TASK_NAMES = {
@@ -56,10 +72,18 @@ const TASK_NAMES = {
   redesign: "界面重构",
 };
 
-const TAB_OPTIONS = [
+const OUTPUT_SECTIONS = [
+  { id: "prompt", label: "提示词", icon: TerminalSquare },
+  { id: "assets", label: "交付资料", icon: Layers3 },
+];
+
+const PROMPT_FORMATS = [
   { id: "prompt", label: "执行版", icon: TerminalSquare },
   { id: "staged", label: "分步版", icon: Layers3 },
   { id: "concise", label: "精简版", icon: Zap },
+];
+
+const ASSET_TYPES = [
   { id: "spec", label: "需求规格", icon: FileCode2 },
   { id: "checklist", label: "验收清单", icon: CheckCircle2 },
 ];
@@ -152,6 +176,22 @@ function DimensionBars({ dimensions, compact = false }) {
   );
 }
 
+function ScoreOverview({ score, dimensions, caption, status, description, compact = false }) {
+  return (
+    <>
+      <div className={`live-score ${compact ? "is-compact" : ""}`}>
+        <ScoreRing score={score} size={compact ? "medium" : "large"} />
+        <div>
+          <span className="score-caption">{caption}</span>
+          <strong>{status}</strong>
+          <p>{description}</p>
+        </div>
+      </div>
+      <DimensionBars dimensions={dimensions} compact={compact} />
+    </>
+  );
+}
+
 function EmptyInspector() {
   return (
     <aside className="inspector-card inspector-empty">
@@ -184,17 +224,15 @@ function LiveInspector({ preview }) {
         <span className="section-kicker">INSTRUCTION HEALTH</span>
         <span className="live-dot">实时</span>
       </div>
-      <div className="live-score">
-        <ScoreRing score={preview.score} />
-        <div>
-          <span className="score-caption">需求完整度</span>
-          <strong>
-            {preview.score >= 78 ? "可以开始执行" : preview.score >= 60 ? "接近可用" : "还缺少关键线索"}
-          </strong>
-          <p>随输入与补充实时更新</p>
-        </div>
-      </div>
-      <DimensionBars dimensions={preview.dimensions} />
+      <ScoreOverview
+        score={preview.score}
+        dimensions={preview.dimensions}
+        caption="需求完整度"
+        status={
+          preview.score >= 78 ? "可以开始执行" : preview.score >= 60 ? "接近可用" : "还缺少关键线索"
+        }
+        description="随输入与补充实时更新"
+      />
       <div className="gap-block">
         <div className="gap-title">
           <span>建议补齐</span>
@@ -233,7 +271,6 @@ function Composer({
   provider,
   onCompile,
   isCompiling,
-  onOpenSettings,
 }) {
   const textareaRef = useRef(null);
   useEffect(() => {
@@ -310,16 +347,11 @@ function Composer({
           <ChevronDown size={14} />
         </label>
 
-        <button
-          type="button"
-          className="provider-control"
-          onClick={onOpenSettings}
-          title="配置模型接口"
-        >
+        <div className="provider-control" title="在顶部“模型”入口中配置">
           <span className={`provider-status-dot ${provider.kind === "local" ? "is-local" : ""}`} />
           {provider.kind === "local" ? "本地编译" : provider.model || "配置模型"}
-          <Settings2 size={14} />
-        </button>
+          <Settings2 size={14} aria-hidden="true" />
+        </div>
 
         <button
           type="button"
@@ -360,7 +392,6 @@ function IntroView({
   provider,
   onCompile,
   isCompiling,
-  onOpenSettings,
 }) {
   return (
     <main className="intro-main">
@@ -392,19 +423,8 @@ function IntroView({
           provider={provider}
           onCompile={onCompile}
           isCompiling={isCompiling}
-          onOpenSettings={onOpenSettings}
         />
         <LiveInspector preview={preview} />
-      </div>
-
-      <div className="process-strip">
-        <div><span>01</span><strong>理解意图</strong><p>识别产品与真实目标</p></div>
-        <ArrowRight size={18} />
-        <div><span>02</span><strong>发现缺口</strong><p>只问真正影响实现的</p></div>
-        <ArrowRight size={18} />
-        <div><span>03</span><strong>结构化编译</strong><p>输出完整开发任务</p></div>
-        <ArrowRight size={18} />
-        <div><span>04</span><strong>持续验收</strong><p>附带清单与风险提醒</p></div>
       </div>
     </main>
   );
@@ -433,11 +453,10 @@ function ResultInspector({
   setAnswers,
   onRecompile,
   isCompiling,
-  provider,
-  onOpenSettings,
 }) {
-  const [answersOpen, setAnswersOpen] = useState(true);
+  const [issuesOpen, setIssuesOpen] = useState(true);
   const questions = result.questions || [];
+  const risks = result.risks || [];
   const changedAnswers = Object.values(answers).some(Boolean);
 
   return (
@@ -450,28 +469,28 @@ function ResultInspector({
             {result.mode === "ai" ? "AI 增强" : "本地编译"}
           </span>
         </div>
-        <div className="result-score-row">
-          <ScoreRing score={result.score} size="medium" />
-          <div>
-            <strong>{result.score >= 80 ? "可以开始执行" : "建议补充后执行"}</strong>
-            <p>{result.summary}</p>
-          </div>
-        </div>
-        <DimensionBars dimensions={result.dimensions} compact />
+        <ScoreOverview
+          score={result.score}
+          dimensions={result.dimensions}
+          caption="需求完整度"
+          status={result.score >= 80 ? "可以开始执行" : "建议补充后执行"}
+          description={result.summary}
+          compact
+        />
       </div>
 
       <div className="result-side-card">
         <button
           type="button"
           className="side-card-toggle"
-          onClick={() => setAnswersOpen((value) => !value)}
-          aria-expanded={answersOpen}
+          onClick={() => setIssuesOpen((value) => !value)}
+          aria-expanded={issuesOpen}
         >
-          <span><WandSparkles size={16} /> 关键追问</span>
-          <span className="question-count">{questions.length}</span>
-          <ChevronDown size={16} className={answersOpen ? "is-open" : ""} />
+          <span><WandSparkles size={16} /> 待处理问题</span>
+          <span className="question-count">{questions.length + risks.length}</span>
+          <ChevronDown size={16} className={issuesOpen ? "is-open" : ""} />
         </button>
-        {answersOpen && (
+        {issuesOpen && (
           <div className="question-list">
             {questions.length ? (
               <>
@@ -529,27 +548,18 @@ function ResultInspector({
                 <p>现在可以直接把提示词交给编程智能体。</p>
               </div>
             )}
+            {risks.length > 0 && (
+              <div className="risk-subsection">
+                <div className="risk-subsection-title">
+                  <CircleAlert size={14} />
+                  风险提醒
+                </div>
+                <RiskList risks={risks} />
+              </div>
+            )}
           </div>
         )}
       </div>
-
-      <div className="result-side-card">
-        <div className="side-card-title">
-          <span><CircleAlert size={16} /> 风险与注意</span>
-        </div>
-        <RiskList risks={result.risks} />
-      </div>
-
-      {provider.kind === "local" && (
-        <button type="button" className="upgrade-model-card" onClick={onOpenSettings}>
-          <span className="upgrade-icon"><Sparkles size={17} /></span>
-          <span>
-            <strong>接入模型，理解得更深</strong>
-            <p>支持 12 种接口与本地模型</p>
-          </span>
-          <ArrowRight size={17} />
-        </button>
-      )}
     </aside>
   );
 }
@@ -565,10 +575,12 @@ function ResultView({
   onDownload,
   isCompiling,
   provider,
-  onOpenSettings,
 }) {
-  const [activeTab, setActiveTab] = useState("prompt");
+  const [activeSection, setActiveSection] = useState("prompt");
+  const [promptFormat, setPromptFormat] = useState("prompt");
+  const [assetType, setAssetType] = useState("spec");
   const [wrapped, setWrapped] = useState(false);
+  const activeTab = activeSection === "prompt" ? promptFormat : assetType;
   const currentText = getPromptForTab(result, activeTab);
 
   return (
@@ -605,16 +617,16 @@ function ResultView({
         <section className="prompt-panel">
           <div className="prompt-panel-head">
             <div className="prompt-tabs" role="tablist" aria-label="输出格式">
-              {TAB_OPTIONS.map((tab) => {
+              {OUTPUT_SECTIONS.map((tab) => {
                 const Icon = tab.icon;
                 return (
                   <button
                     type="button"
                     role="tab"
-                    aria-selected={activeTab === tab.id}
-                    className={activeTab === tab.id ? "is-active" : ""}
+                    aria-selected={activeSection === tab.id}
+                    className={activeSection === tab.id ? "is-active" : ""}
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => setActiveSection(tab.id)}
                   >
                     <Icon size={15} />
                     {tab.label}
@@ -626,6 +638,30 @@ function ResultView({
               <span><span className="inline-dot" /> {currentText.split(/\s+/).length} tokens 约</span>
               <span>Markdown</span>
             </div>
+          </div>
+
+          <div className="output-subtabs" role="tablist" aria-label="输出子类型">
+            {(activeSection === "prompt" ? PROMPT_FORMATS : ASSET_TYPES).map((option) => {
+              const Icon = option.icon;
+              const selected = activeTab === option.id;
+              return (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  className={selected ? "is-active" : ""}
+                  key={option.id}
+                  onClick={() =>
+                    activeSection === "prompt"
+                      ? setPromptFormat(option.id)
+                      : setAssetType(option.id)
+                  }
+                >
+                  <Icon size={14} />
+                  {option.label}
+                </button>
+              );
+            })}
           </div>
 
           {result.mode === "local" && provider.kind !== "local" && (
@@ -661,8 +697,6 @@ function ResultView({
           setAnswers={setAnswers}
           onRecompile={onRecompile}
           isCompiling={isCompiling}
-          provider={provider}
-          onOpenSettings={onOpenSettings}
         />
       </div>
     </main>
@@ -681,10 +715,21 @@ function SettingsDrawer({
   testing,
   testResult,
   setTestResult,
+  appInfo,
+  updateState,
+  autoCheckUpdates,
+  setAutoCheckUpdates,
+  onCheckUpdates,
+  onOpenRelease,
 }) {
   const [showKey, setShowKey] = useState(false);
   const [saveKey, setSaveKey] = useState(false);
   const activeProvider = PROVIDER_PRESETS.find((item) => item.id === providerId) || PROVIDER_PRESETS[0];
+  const endpointPreview = previewProviderEndpoint(providerState);
+  const normalizedEndpoint = isOpenAICompatibleKind(providerState.kind)
+    ? normalizeOpenAIEndpoint(providerState.baseUrl, providerState.kind)
+    : null;
+  const checkingUpdate = updateState?.status === "checking";
 
   useEffect(() => {
     if (!open) {
@@ -712,14 +757,14 @@ function SettingsDrawer({
           <div className="privacy-banner">
             <ShieldCheck size={18} />
             <p>
-              请求由本机服务转发。密钥默认只在当前会话生效；关闭“记住密钥”后刷新页面即清除。
+              Windows 版由本机服务转发；PWA/Android 可使用配置的远端代理。密钥默认只在当前会话生效。
             </p>
           </div>
 
           <div className="settings-section">
             <div className="settings-label">
               <span>选择模型接口</span>
-              <small>12 个预设</small>
+              <small>{PROVIDER_PRESETS.length} 个预设</small>
             </div>
             <div className="provider-grid">
               {PROVIDER_PRESETS.map((item) => (
@@ -757,6 +802,19 @@ function SettingsDrawer({
                   <span>{activeProvider.name} 配置</span>
                   <small>{activeProvider.localOnly ? "本地服务" : "API 代理"}</small>
                 </div>
+                {isOpenAICompatibleKind(providerState.kind) && (
+                  <label className="form-field">
+                    <span>接口协议</span>
+                    <select
+                      value={providerState.kind}
+                      onChange={(event) => setProviderConfig("kind", event.target.value)}
+                    >
+                      <option value="openai-auto">自动兼容（优先 Chat Completions）</option>
+                      <option value="openai-chat">Chat Completions</option>
+                      <option value="openai-responses">Responses</option>
+                    </select>
+                  </label>
+                )}
                 <label className="form-field">
                   <span>接口地址</span>
                   <input
@@ -765,6 +823,9 @@ function SettingsDrawer({
                     placeholder="https://api.example.com/v1"
                     spellCheck="false"
                   />
+                  <small className="field-hint">
+                    支持站点首页、`/v1` Base URL 或完整接口地址，保存时会自动规范化。
+                  </small>
                 </label>
                 <label className="form-field">
                   <span>模型名称</span>
@@ -808,10 +869,16 @@ function SettingsDrawer({
               <div className="protocol-note">
                 <Layers3 size={17} />
                 <span>
-                  当前协议：<b>{providerState.kind}</b>
-                  {providerState.kind === "openai-chat" && " · 兼容 /chat/completions"}
+                  当前协议：<b>{describeProtocol(providerState.kind)}</b>
+                  {endpointPreview && <> · 将请求 <code>{endpointPreview}</code></>}
                 </span>
               </div>
+              {normalizedEndpoint?.inputChanged && (
+                <div className="endpoint-correction">
+                  <CheckCircle2 size={15} />
+                  Base URL 将自动规范化为 <code>{normalizedEndpoint.baseUrl}</code>
+                </div>
+              )}
 
               <button
                 type="button"
@@ -825,11 +892,87 @@ function SettingsDrawer({
               {testResult && (
                 <div className={`test-result ${testResult.ok ? "is-success" : "is-error"}`}>
                   {testResult.ok ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
-                  <span>{testResult.message}</span>
+                  <span>
+                    {testResult.message}
+                    {testResult.endpoint && <code className="test-endpoint">{testResult.endpoint}</code>}
+                  </span>
+                </div>
+              )}
+              {!!testResult?.models?.length && (
+                <div className="available-models">
+                  <span>选择可用模型</span>
+                  <div>
+                    {testResult.models.slice(0, 12).map((model) => (
+                      <button
+                        type="button"
+                        className={providerState.model === model ? "is-selected" : ""}
+                        key={model}
+                        onClick={() => setProviderConfig("model", model)}
+                      >
+                        {model}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
           )}
+
+          <section className="update-settings-card" aria-label="应用更新">
+            <div className="update-settings-head">
+              <span className="update-settings-icon"><DownloadCloud size={18} /></span>
+              <div>
+                <strong>应用更新</strong>
+                <p>
+                  当前版本 v{appInfo?.version || __APP_VERSION__} ·{" "}
+                  {platformLabel(appInfo?.platform)}
+                </p>
+              </div>
+              <span className={`update-state-dot update-state-${updateState?.status || "idle"}`} />
+            </div>
+            {updateState?.status === "available" && (
+              <div className="update-available-inline">
+                <span>发现新版本 v{updateState.latestVersion}</span>
+                <button type="button" onClick={() => onOpenRelease(updateState.releaseUrl)}>
+                  查看更新
+                  <ExternalLink size={14} />
+                </button>
+              </div>
+            )}
+            {updateState?.status === "up-to-date" && (
+              <p className="update-message">已是最新版本。</p>
+            )}
+            {updateState?.status === "error" && (
+              <p className="update-message is-error">{updateState.message}</p>
+            )}
+            <div className="update-settings-actions">
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  checked={autoCheckUpdates}
+                  onChange={(event) => setAutoCheckUpdates(event.target.checked)}
+                  disabled={!window.yangouDesktop}
+                />
+                <span>启动时自动检查</span>
+              </label>
+              <button
+                type="button"
+                className="check-update-button"
+                onClick={() => onCheckUpdates(true)}
+                disabled={checkingUpdate || !window.yangouDesktop}
+              >
+                {checkingUpdate ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}
+                {checkingUpdate ? "检查中" : "检查更新"}
+              </button>
+            </div>
+            {!window.yangouDesktop && (
+              <p className="update-message">
+                {isNativeAndroid
+                  ? "Android 更新将由 Google Play 或签名 APK 提供。"
+                  : "在线更新检查仅在 Windows 桌面版可用。"}
+              </p>
+            )}
+          </section>
         </div>
 
         <div className="drawer-footer">
@@ -838,6 +981,7 @@ function SettingsDrawer({
             <span>
               当前：<strong>{provider.kind === "local" ? "本地编译器" : activeProvider.name}</strong>
             </span>
+            <span className="drawer-version">v{appInfo?.version || __APP_VERSION__}</span>
           </div>
           <button type="button" className="primary-action" onClick={onClose}>
             完成
@@ -921,6 +1065,23 @@ function Toast({ toast }) {
   );
 }
 
+function UpdateBanner({ updateState, onOpenRelease }) {
+  if (updateState?.status !== "available") return null;
+  return (
+    <div className="update-banner" role="status">
+      <span className="update-banner-icon"><DownloadCloud size={17} /></span>
+      <div>
+        <strong>言构 v{updateState.latestVersion} 已发布</strong>
+        <span>当前版本 v{updateState.currentVersion}，可前往官方 Release 下载更新。</span>
+      </div>
+      <button type="button" onClick={() => onOpenRelease(updateState.releaseUrl)}>
+        查看更新
+        <ExternalLink size={14} />
+      </button>
+    </div>
+  );
+}
+
 export default function App() {
   const [idea, setIdea] = useState("");
   const [taskType, setTaskType] = useState("auto");
@@ -933,6 +1094,15 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [appInfo, setAppInfo] = useState({
+    version: __APP_VERSION__,
+    platform: "web",
+    packaged: false,
+  });
+  const [updateState, setUpdateState] = useState({ status: "idle" });
+  const [autoCheckUpdates, setAutoCheckUpdates] = useState(
+    () => localStorage.getItem(STORAGE_KEYS.autoCheckUpdates) !== "false",
+  );
   const [providerId, setProviderIdState] = useState(
     () => localStorage.getItem(STORAGE_KEYS.providerId) || "local",
   );
@@ -983,6 +1153,60 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.history, JSON.stringify(history));
   }, [history]);
 
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.autoCheckUpdates, String(autoCheckUpdates));
+  }, [autoCheckUpdates]);
+
+  useEffect(() => {
+    const bridge = window.yangouDesktop;
+    if (!bridge) return undefined;
+
+    let active = true;
+    bridge.getAppInfo().then((info) => {
+      if (active) setAppInfo(info);
+    }).catch(() => {});
+
+    let timer;
+    if (localStorage.getItem(STORAGE_KEYS.autoCheckUpdates) !== "false") {
+      timer = window.setTimeout(() => {
+        if (active) checkForUpdates(false);
+      }, 3500);
+    }
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      const button = event.target.closest?.("button");
+      if (
+        !button ||
+        button.disabled ||
+        button.classList.contains("drawer-backdrop") ||
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        return;
+      }
+
+      const rect = button.getBoundingClientRect();
+      const size = Math.max(rect.width, rect.height) * 1.35;
+      const ripple = document.createElement("span");
+      ripple.className = "button-ripple";
+      ripple.style.width = `${size}px`;
+      ripple.style.height = `${size}px`;
+      ripple.style.left = `${event.clientX - rect.left - size / 2}px`;
+      ripple.style.top = `${event.clientY - rect.top - size / 2}px`;
+      button.appendChild(ripple);
+      window.setTimeout(() => ripple.remove(), 520);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
+
   function chooseProvider(id) {
     setProviderIdState(id);
     setTestResult(null);
@@ -997,6 +1221,53 @@ export default function App() {
       },
     }));
     setTestResult(null);
+  }
+
+  async function checkForUpdates(manual = false) {
+    const bridge = window.yangouDesktop;
+    if (!bridge) {
+      if (manual) {
+        setToast({ type: "info", message: "在线更新检查仅在 Windows 桌面版可用。" });
+      }
+      return;
+    }
+
+    setUpdateState((current) => ({
+      ...current,
+      status: "checking",
+      currentVersion: appInfo.version,
+    }));
+
+    try {
+      const update = await bridge.checkForUpdates(manual);
+      setUpdateState(update);
+      if (!manual) return;
+      if (update.status === "available") {
+        setToast({ type: "success", message: `发现新版本 v${update.latestVersion}。` });
+      } else if (update.status === "up-to-date") {
+        setToast({ type: "success", message: "当前已经是最新版本。" });
+      } else if (update.status === "development") {
+        setToast({ type: "info", message: update.message });
+      } else if (update.status === "error") {
+        setToast({ type: "error", message: update.message });
+      }
+    } catch (error) {
+      const failed = {
+        status: "error",
+        currentVersion: appInfo.version,
+        message: error.message || "更新检查失败。",
+      };
+      setUpdateState(failed);
+      if (manual) setToast({ type: "error", message: failed.message });
+    }
+  }
+
+  async function openUpdateRelease(releaseUrl) {
+    try {
+      await window.yangouDesktop?.openRelease(releaseUrl);
+    } catch (error) {
+      setToast({ type: "error", message: error.message || "无法打开更新页面。" });
+    }
   }
 
   function addToHistory(compiledResult, sourceIdea, settings) {
@@ -1030,7 +1301,16 @@ export default function App() {
     setIsCompiling(true);
     setToast({ type: "info", message: "本地版本已就绪，正在调用模型深度编译…" });
     try {
-      const response = await fetch("/api/generate", {
+      if (isNativeAndroid && !remoteApiBaseUrl) {
+        addToHistory(localResult, idea, { taskType, targetTool, answers: customAnswers });
+        setToast({
+          type: "info",
+          message: "v0.2.0 的 Android 原生模型直连尚未启用，已生成本地结果。",
+        });
+        return;
+      }
+
+      const response = await fetch(apiUrl("/api/generate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1081,16 +1361,34 @@ export default function App() {
       },
     }));
     try {
-      const response = await fetch("/api/test", {
+      if (isNativeAndroid && !remoteApiBaseUrl) {
+        throw new Error("Android 原生模型连接将在 v0.2.1 启用；当前可使用本地编译模式。");
+      }
+      const response = await fetch(apiUrl("/api/test"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "连接失败");
+      const models = data.result?.models || [];
+      const modelAvailable = !models.length || models.includes(provider.model);
+      if (data.correctedBaseUrl) {
+        setProviderConfigs((current) => ({
+          ...current,
+          [providerId]: {
+            ...current[providerId],
+            baseUrl: data.correctedBaseUrl,
+          },
+        }));
+      }
       setTestResult({
-        ok: true,
-        message: `连接成功 · ${data.model} · ${data.latency} ms`,
+        ok: modelAvailable,
+        message: modelAvailable
+          ? `连接成功 · ${models.length ? `${models.length} 个模型可用` : describeProtocol(data.protocolUsed)} · ${data.latency} ms`
+          : `连接成功，但模型 ${provider.model} 不在密钥可见列表中，请重新选择。`,
+        models,
+        endpoint: data.endpoint,
       });
     } catch (error) {
       setTestResult({ ok: false, message: error.message });
@@ -1165,11 +1463,6 @@ export default function App() {
         </button>
 
         <div className="header-actions">
-          <button type="button" className="header-model-pill" onClick={() => setSettingsOpen(true)}>
-            <span className={`provider-status-dot ${provider.kind === "local" ? "is-local" : ""}`} />
-            <span>{provider.kind === "local" ? "本地编译器" : providerPreset.name}</span>
-            <ChevronDown size={13} />
-          </button>
           <button type="button" className="header-icon-button" onClick={() => setHistoryOpen(true)}>
             <History size={17} />
             <span>历史</span>
@@ -1194,6 +1487,8 @@ export default function App() {
         </div>
       </header>
 
+      <UpdateBanner updateState={updateState} onOpenRelease={openUpdateRelease} />
+
       {result ? (
         <ResultView
           result={result}
@@ -1206,7 +1501,6 @@ export default function App() {
           onDownload={downloadText}
           isCompiling={isCompiling}
           provider={provider}
-          onOpenSettings={() => setSettingsOpen(true)}
         />
       ) : (
         <IntroView
@@ -1220,7 +1514,6 @@ export default function App() {
           provider={provider}
           onCompile={() => handleCompile(answers)}
           isCompiling={isCompiling}
-          onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
 
@@ -1242,6 +1535,12 @@ export default function App() {
         testing={testing}
         testResult={testResult}
         setTestResult={setTestResult}
+        appInfo={appInfo}
+        updateState={updateState}
+        autoCheckUpdates={autoCheckUpdates}
+        setAutoCheckUpdates={setAutoCheckUpdates}
+        onCheckUpdates={checkForUpdates}
+        onOpenRelease={openUpdateRelease}
       />
       <HistoryDrawer
         open={historyOpen}

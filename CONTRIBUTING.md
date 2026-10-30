@@ -7,6 +7,7 @@
 - Node.js 22.12 或更高版本
 - pnpm 11
 - Windows 10/11 x64（构建桌面安装包时需要）
+- Android Studio 与 Android SDK（构建 APK 时需要）
 
 ```powershell
 pnpm install
@@ -17,6 +18,13 @@ pnpm dev
 
 ```powershell
 pnpm desktop:dev
+```
+
+Android 同步：
+
+```powershell
+pnpm android:sync
+pnpm android:open
 ```
 
 ## 提交前检查

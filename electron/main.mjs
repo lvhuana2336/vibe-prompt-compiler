@@ -1,6 +1,7 @@
 import path from "node:path";
-import { app, BrowserWindow, dialog, Menu, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from "electron";
 import { loadEnvironment, startLocalServer } from "../server/app.mjs";
+import { createUpdateManager } from "./update-manager.mjs";
 
 const isDev = process.argv.includes("--dev");
 const isSmokeTest = process.argv.includes("--smoke-test");
@@ -9,6 +10,7 @@ const applicationId = "com.yangou.promptcompiler";
 let mainWindow;
 let localServer;
 let isQuitting = false;
+let updateManager;
 
 app.setName("言构");
 app.setAppUserModelId(applicationId);
@@ -63,6 +65,7 @@ async function createWindow() {
     backgroundColor: "#f2efe7",
     icon: path.join(app.getAppPath(), "build", "icon.ico"),
     webPreferences: {
+      preload: path.join(app.getAppPath(), "electron", "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -72,6 +75,9 @@ async function createWindow() {
   });
 
   hardenWebContents(mainWindow.webContents);
+  mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
+    console.error(`[preload] ${preloadPath}: ${error.message}`);
+  });
 
   mainWindow.once("ready-to-show", () => {
     if (!isSmokeTest) mainWindow.show();
@@ -93,7 +99,17 @@ async function createWindow() {
       const title = await mainWindow.webContents.executeJavaScript(
         "document.querySelector('h1')?.textContent.replace(/\\s+/g, ' ').trim()",
       );
-      console.log(JSON.stringify({ ok: health.ok === true, title, port: localServer.port }));
+      const desktopBridge = await mainWindow.webContents.executeJavaScript(
+        "window.yangouDesktop ? window.yangouDesktop.getAppInfo().then(async info => ({ available: true, info, update: await window.yangouDesktop.checkForUpdates(false) })) : { available: false }",
+      );
+      console.log(
+        JSON.stringify({
+          ok: health.ok === true,
+          title,
+          port: localServer.port,
+          desktopBridge,
+        }),
+      );
       app.quit();
     } catch (error) {
       console.error(`[desktop smoke] ${error.message}`);
@@ -106,6 +122,19 @@ async function createWindow() {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
+  updateManager = createUpdateManager({ app, shell });
+  ipcMain.handle("app:get-info", () => ({
+    version: app.getVersion(),
+    platform: process.platform,
+    packaged: app.isPackaged,
+  }));
+  ipcMain.handle("update:check", (_event, options) =>
+    updateManager.check({ manual: Boolean(options?.manual) }),
+  );
+  ipcMain.handle("update:open-release", (_event, releaseUrl) =>
+    updateManager.openRelease(releaseUrl),
+  );
+
   try {
     await createWindow();
   } catch (error) {

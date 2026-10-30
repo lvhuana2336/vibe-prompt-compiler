@@ -1,0 +1,13 @@
+{
+  "appId": "com.yangou.promptcompiler",
+  "appName": "言构",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

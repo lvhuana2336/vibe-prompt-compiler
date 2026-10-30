@@ -1,6 +1,6 @@
 import path from "node:path";
 import express from "express";
-import { callProvider } from "./model-adapters.mjs";
+import { callProvider, probeProvider } from "./model-adapters.mjs";
 
 const systemPrompt = `你是「言构」的首席需求编译器，擅长把普通人的自然语言想法转换成 AI 编程智能体能够高准确率执行的开发提示词。
 
@@ -111,11 +111,8 @@ export async function startLocalServer({ root, isDev = false, port = 0 }) {
   app.post("/api/test", async (request, response) => {
     const config = request.body?.provider;
     try {
-      const output = await callProvider({
+      const output = await probeProvider({
         config,
-        system: "你是连接测试助手。只回复：连接成功。",
-        user: "请回复：连接成功。",
-        test: true,
       });
       response.json(output);
     } catch (error) {
