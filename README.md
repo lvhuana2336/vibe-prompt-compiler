@@ -36,9 +36,11 @@
 | 工具适配 | 针对 Codex、Claude Code、Cursor、Lovable / Bolt 调整执行约定 |
 | 多模型路由 | 支持 OpenAI、Claude、Gemini、DeepSeek、Kimi、Qwen、GLM 等接口 |
 | 本地优先 | 无密钥可用，模型失败时自动保留本地编译结果 |
-| 本地历史 | 编译记录、模型配置和历史恢复均保存在当前设备 |
+| 全局设置 | 模型、个性化、数据和更新统一入口 |
+| 个性化 | 只文字缩放、输入框透明度、主题、日夜模式与自定义壁纸 |
+| 本地历史 | 桌面版使用用户数据文件持久化，支持上限、开关、备份恢复和 JSON 导入导出 |
 | 桌面交付 | Windows 安装包内置运行时，不要求用户另装 Node.js |
-| 更新检查 | Windows 启动后自动检查新版本，也可在模型设置中手动检查 |
+| 更新检查 | Windows 启动后自动检查新版本，也可在设置中手动检查 |
 | 中转站诊断 | 自动规范化 Base URL，检测密钥、模型列表和兼容协议 |
 | Android 准备 | 可安装 PWA、离线应用壳与 Capacitor Android 工程底座 |
 
@@ -120,7 +122,7 @@ release/YanGou-Setup-<version>.exe
 - 阻止外部页面替换应用窗口；
 - 关闭窗口时自动释放本地服务。
 
-应用启动约 3.5 秒后会静默检查 GitHub Release，也可以在“模型 → 应用更新”中手动检查。发现新版本时会展示更新提示并打开官方 Release 下载页。
+应用启动后会检测 GitHub Release，也可以在“设置 → 更新”中手动检查。发现新版本时会展示更新提示并打开官方 Release 下载页。
 
 ![自动更新提示](docs/screenshots/update.png)
 
@@ -128,7 +130,7 @@ release/YanGou-Setup-<version>.exe
 
 ## Android 与 PWA
 
-v0.2.0 提供可安装 PWA：
+当前版本提供可安装 PWA：
 
 - 支持添加到 Android 主屏幕。
 - 公开实例：[lvhuana2336.github.io/vibe-prompt-compiler](https://lvhuana2336.github.io/vibe-prompt-compiler/)。

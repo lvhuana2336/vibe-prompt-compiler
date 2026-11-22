@@ -65,12 +65,67 @@ const stagedContainsVerification = (await page.locator(".prompt-document pre").i
 await page.locator(".header-icon-button").last().click();
 await page.locator(".settings-drawer").waitFor();
 const providerCount = await page.locator(".provider-card").count();
-const updateSettingsVisible = await page.locator(".update-settings-card").isVisible();
+await page.waitForTimeout(350);
 await page.screenshot({ path: path.join(screenshotDir, "04-settings.png"), fullPage: true });
+
+await page.getByRole("tab", { name: "个性化" }).click();
+const settingsTabCount = await page.locator(".settings-tabs [role=tab]").count();
+const standardHeadingSize = await page
+  .locator(".drawer-head h2")
+  .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+await page.getByRole("button", { name: "大", exact: true }).click();
+const largeHeadingSize = await page
+  .locator(".drawer-head h2")
+  .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+await page.getByRole("button", { name: "夜晚", exact: true }).click();
+const darkModeApplied = await page.evaluate(
+  () => document.documentElement.dataset.colorMode === "dark",
+);
+await page.locator(".range-setting input").fill("60");
+await page.waitForFunction(
+  () => document.documentElement.style.getPropertyValue("--field-opacity") === "0.6",
+);
+const fieldOpacityApplied = true;
+const fileChooserPromise = page.waitForEvent("filechooser");
+await page.getByRole("button", { name: "选择壁纸" }).click();
+const wallpaperChooser = await fileChooserPromise;
+await wallpaperChooser.setFiles(path.resolve("docs/screenshots/workspace.png"));
+await page.waitForFunction(
+  () => document.documentElement.style.getPropertyValue("--wallpaper-image") !== "none",
+);
+const wallpaperApplied = await page
+  .locator(".wallpaper-preview")
+  .evaluate((element) => getComputedStyle(element).backgroundImage !== "none");
+await page.waitForTimeout(350);
+await page.screenshot({ path: path.join(screenshotDir, "04b-personalization-dark.png"), fullPage: true });
+
+await page.getByRole("tab", { name: "数据" }).click();
+const dataSettingsVisible = await page.locator(".data-summary-card").isVisible();
+const historyLimitOptions = await page.locator(".data-settings select option").count();
+const downloadPromise = page.waitForEvent("download");
+await page.getByRole("button", { name: "导出数据" }).click();
+const backupDownload = await downloadPromise;
+const backupPath = await backupDownload.path();
+const exportDownloaded = backupDownload.suggestedFilename().endsWith(".json");
+page.once("dialog", (dialog) => dialog.accept());
+const importChooserPromise = page.waitForEvent("filechooser");
+await page.getByRole("button", { name: "导入数据" }).click();
+const importChooser = await importChooserPromise;
+await importChooser.setFiles(backupPath);
+await page.getByText("已导入 1 条记录。").waitFor();
+const importCompleted = true;
+
+await page.getByRole("tab", { name: "更新" }).click();
+const updateSettingsVisible = await page.locator(".update-settings-card").isVisible();
 await page.locator(".settings-drawer .icon-button").click();
 
 await page.setViewportSize({ width: 390, height: 844 });
 await page.reload({ waitUntil: "networkidle" });
+const appearancePersistedAfterReload = await page.evaluate(
+  () =>
+    document.documentElement.dataset.colorMode === "dark" &&
+    document.documentElement.style.getPropertyValue("--field-opacity") === "0.6",
+);
 await page.locator("textarea").fill(
   "我的 React 页面在手机上导航挤压，帮我修复并优化。",
 );
@@ -84,15 +139,15 @@ await page.screenshot({ path: path.join(screenshotDir, "05-mobile-result.png"), 
 const updatePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await updatePage.addInitScript(() => {
   window.yangouDesktop = {
-    getAppInfo: async () => ({ version: "0.2.1", platform: "win32", packaged: true }),
+    getAppInfo: async () => ({ version: "0.2.2", platform: "win32", packaged: true }),
     checkForUpdates: async () => ({
       status: "available",
-      currentVersion: "0.2.1",
-      latestVersion: "0.2.2",
+      currentVersion: "0.2.2",
+      latestVersion: "0.2.3",
       releaseUrl:
-        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/tag/v0.2.2",
+        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/tag/v0.2.3",
       downloadUrl:
-        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/download/v0.2.2/YanGou-Setup-0.2.2.exe",
+        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/download/v0.2.3/YanGou-Setup-0.2.3.exe",
       publishedAt: "2026-11-22T00:00:00Z",
       notes: "新增更新询问弹窗\n展示新版本改动与预计磁盘占用变化\n保留手动检查更新",
       storage: {
@@ -119,19 +174,27 @@ await updatePage.waitForTimeout(350);
 await updatePage.screenshot({ path: path.join(screenshotDir, "06-update-dialog.png"), fullPage: true });
 await updatePage.locator(".update-later-button").click();
 await updatePage.locator(".header-icon-button").last().click();
+await updatePage.getByRole("tab", { name: "更新" }).click();
 const automaticUpdateToggle = updatePage.getByRole("checkbox", {
   name: /启动时自动检测更新/,
 });
 const automaticUpdateEnabled = await automaticUpdateToggle.isChecked();
 await automaticUpdateToggle.uncheck();
 await updatePage.waitForFunction(
-  () => localStorage.getItem("yangou.updates.auto.v1") === "false",
+  () => {
+    const settings = JSON.parse(localStorage.getItem("yangou.user.settings.v1") || "null");
+    return (
+      localStorage.getItem("yangou.updates.auto.v1") === "false" &&
+      settings?.autoCheckUpdates === false
+    );
+  },
 );
 const automaticUpdateDisabled = true;
 await updatePage.reload({ waitUntil: "networkidle" });
 await updatePage.waitForTimeout(1_200);
 const automaticUpdateDialogDisabled = (await updatePage.locator(".update-dialog").count()) === 0;
 await updatePage.locator(".header-icon-button").last().click();
+await updatePage.getByRole("tab", { name: "更新" }).click();
 await updatePage
   .getByRole("checkbox", { name: /启动时自动检测更新/ })
   .check();
@@ -144,10 +207,10 @@ await updatePage.locator(".settings-drawer .icon-button").click();
 const updateFailurePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await updateFailurePage.addInitScript(() => {
   window.yangouDesktop = {
-    getAppInfo: async () => ({ version: "0.2.1", platform: "win32", packaged: true }),
+    getAppInfo: async () => ({ version: "0.2.2", platform: "win32", packaged: true }),
     checkForUpdates: async () => ({
       status: "error",
-      currentVersion: "0.2.1",
+      currentVersion: "0.2.2",
       message: "更新服务暂时不可用。",
     }),
     openRelease: async () => {},
@@ -180,6 +243,17 @@ console.log(
       rippleCount,
       stagedContainsVerification,
       providerCount,
+      settingsTabCount,
+      standardHeadingSize,
+      largeHeadingSize,
+      darkModeApplied,
+      fieldOpacityApplied,
+      appearancePersistedAfterReload,
+      wallpaperApplied,
+      dataSettingsVisible,
+      historyLimitOptions,
+      exportDownloaded,
+      importCompleted,
       updateSettingsVisible,
       autoUpdateDialogVisible,
       updateNotesVisible,

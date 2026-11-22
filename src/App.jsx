@@ -9,6 +9,7 @@ import {
   CircleAlert,
   Clock3,
   Copy,
+  Database,
   Download,
   DownloadCloud,
   Eye,
@@ -18,18 +19,24 @@ import {
   Gauge,
   HardDrive,
   History,
+  ImagePlus,
   KeyRound,
   Layers3,
   LoaderCircle,
   Menu,
+  Moon,
+  Palette,
   Plus,
   RefreshCw,
   RotateCw,
   Settings2,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
+  Sun,
   TerminalSquare,
   Trash2,
+  Upload,
   WandSparkles,
   X,
   Zap,
@@ -53,6 +60,15 @@ import {
 } from "../shared/provider-endpoints.mjs";
 import { formatByteSize } from "../shared/update-utils.mjs";
 import {
+  clearPersistedHistory,
+  clearWallpaper,
+  loadUserData,
+  loadWallpaper,
+  saveHistory,
+  saveUserSettings,
+  selectWallpaper,
+} from "./lib/user-data.js";
+import {
   apiUrl,
   isNativeAndroid,
   platformLabel,
@@ -64,7 +80,37 @@ const STORAGE_KEYS = {
   providerId: "yangou.provider.id.v1",
   history: "yangou.history.v1",
   autoCheckUpdates: "yangou.updates.auto.v1",
+  userSettings: "yangou.user.settings.v1",
 };
+
+const DEFAULT_APPEARANCE = {
+  fontScale: "standard",
+  fieldOpacity: 88,
+  theme: "meadow",
+  mode: "system",
+  wallpaperEnabled: false,
+  wallpaperFit: "cover",
+  wallpaperDim: 40,
+};
+
+const DEFAULT_HISTORY_SETTINGS = {
+  enabled: true,
+  limit: 100,
+};
+
+const FONT_SCALE_OPTIONS = [
+  { id: "small", label: "小", value: 0.9 },
+  { id: "standard", label: "标准", value: 1 },
+  { id: "large", label: "大", value: 1.1 },
+  { id: "xlarge", label: "特大", value: 1.2 },
+];
+
+const THEME_OPTIONS = [
+  { id: "meadow", label: "原野绿", colors: ["#d8ff63", "#a8d52c", "#f2764d"] },
+  { id: "ocean", label: "海盐蓝", colors: ["#9ce8ff", "#4ebbd9", "#ff9b72"] },
+  { id: "clay", label: "陶土橙", colors: ["#ffd38a", "#d99938", "#e86f4d"] },
+  { id: "graphite", label: "石墨灰", colors: ["#d7e1ff", "#91a9e9", "#f0a56f"] },
+];
 
 const TASK_NAMES = {
   new: "从零构建",
@@ -97,6 +143,50 @@ function readStorage(key, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function normalizeAppearance(value = {}) {
+  const wallpaperDim = Number(value.wallpaperDim);
+  return {
+    ...DEFAULT_APPEARANCE,
+    ...value,
+    fieldOpacity: Math.max(35, Math.min(100, Number(value.fieldOpacity) || 88)),
+    wallpaperDim: Math.max(
+      0,
+      Math.min(75, Number.isFinite(wallpaperDim) ? wallpaperDim : DEFAULT_APPEARANCE.wallpaperDim),
+    ),
+  };
+}
+
+function normalizeHistorySettings(value = {}) {
+  const limit = Number(value.limit);
+  return {
+    enabled: value.enabled !== false,
+    limit: [20, 50, 100, 200].includes(limit) ? limit : DEFAULT_HISTORY_SETTINGS.limit,
+  };
+}
+
+function persistedSettings({
+  providerId,
+  providerConfigs,
+  autoCheckUpdates,
+  appearance,
+  historySettings,
+}) {
+  return {
+    schemaVersion: 1,
+    updatedAt: new Date().toISOString(),
+    providerId,
+    providerConfigs: Object.fromEntries(
+      Object.entries(providerConfigs).map(([id, config]) => [
+        id,
+        { ...config, apiKey: config.persistApiKey ? config.apiKey : "" },
+      ]),
+    ),
+    autoCheckUpdates,
+    appearance,
+    history: historySettings,
+  };
 }
 
 function makeDefaultConfigs() {
@@ -705,6 +795,258 @@ function ResultView({
   );
 }
 
+function AppearanceSettingsPanel({
+  appearance,
+  onChange,
+  wallpaperUrl,
+  wallpaperBusy,
+  onSelectWallpaper,
+  onClearWallpaper,
+}) {
+  return (
+    <div className="appearance-settings">
+      <section className="settings-section">
+        <div className="settings-label">
+          <span>显示模式</span>
+          <small>跟随系统时会自动切换</small>
+        </div>
+        <div className="appearance-segmented appearance-mode-options">
+          {[
+            { id: "system", label: "跟随系统", icon: SlidersHorizontal },
+            { id: "light", label: "白天", icon: Sun },
+            { id: "dark", label: "夜晚", icon: Moon },
+          ].map((option) => {
+            const Icon = option.icon;
+            return (
+              <button
+                type="button"
+                className={appearance.mode === option.id ? "is-selected" : ""}
+                key={option.id}
+                onClick={() => onChange("mode", option.id)}
+              >
+                <Icon size={15} />
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-label">
+          <span>预设主题</span>
+          <small>只改变强调色与整体气质</small>
+        </div>
+        <div className="theme-preset-grid">
+          {THEME_OPTIONS.map((theme) => (
+            <button
+              type="button"
+              className={`theme-preset ${appearance.theme === theme.id ? "is-selected" : ""}`}
+              key={theme.id}
+              onClick={() => onChange("theme", theme.id)}
+            >
+              <span className="theme-swatches">
+                {theme.colors.map((color) => (
+                  <i key={color} style={{ background: color }} />
+                ))}
+              </span>
+              <strong>{theme.label}</strong>
+              {appearance.theme === theme.id && <Check size={14} />}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-label">
+          <span>字体大小</span>
+          <small>仅缩放文字，不放大卡片间距</small>
+        </div>
+        <div className="appearance-segmented">
+          {FONT_SCALE_OPTIONS.map((option) => (
+            <button
+              type="button"
+              className={appearance.fontScale === option.id ? "is-selected" : ""}
+              key={option.id}
+              onClick={() => onChange("fontScale", option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <label className="range-setting">
+          <span>
+            <strong>文本框不透明度</strong>
+            <small>只影响输入框背景，文字保持清晰</small>
+          </span>
+          <b>{appearance.fieldOpacity}%</b>
+          <input
+            type="range"
+            min="35"
+            max="100"
+            step="1"
+            value={appearance.fieldOpacity}
+            onChange={(event) => onChange("fieldOpacity", Number(event.target.value))}
+          />
+        </label>
+      </section>
+
+      <section className="wallpaper-settings-card">
+        <div className="wallpaper-settings-head">
+          <span className="wallpaper-preview" style={wallpaperUrl ? { backgroundImage: `url("${wallpaperUrl}")` } : undefined}>
+            {!wallpaperUrl && <ImagePlus size={22} />}
+          </span>
+          <div>
+            <strong>自定义壁纸</strong>
+            <p>支持 PNG、JPG、WebP，文件上限 12 MB。</p>
+          </div>
+          <label className="compact-toggle">
+            <input
+              type="checkbox"
+              checked={appearance.wallpaperEnabled}
+              onChange={(event) => onChange("wallpaperEnabled", event.target.checked)}
+              disabled={!wallpaperUrl}
+            />
+            <span>启用</span>
+          </label>
+        </div>
+        <div className="wallpaper-actions">
+          <button type="button" onClick={onSelectWallpaper} disabled={wallpaperBusy}>
+            {wallpaperBusy ? <LoaderCircle size={15} className="spin" /> : <ImagePlus size={15} />}
+            {wallpaperUrl ? "更换壁纸" : "选择壁纸"}
+          </button>
+          {wallpaperUrl && (
+            <button type="button" className="is-danger" onClick={onClearWallpaper}>
+              <Trash2 size={15} />
+              移除
+            </button>
+          )}
+        </div>
+        {wallpaperUrl && (
+          <div className="wallpaper-tuning">
+            <label>
+              <span>填充方式</span>
+              <select
+                value={appearance.wallpaperFit}
+                onChange={(event) => onChange("wallpaperFit", event.target.value)}
+              >
+                <option value="cover">铺满裁切</option>
+                <option value="contain">完整显示</option>
+                <option value="center">居中显示</option>
+              </select>
+            </label>
+            <label>
+              <span>暗化遮罩 {appearance.wallpaperDim}%</span>
+              <input
+                type="range"
+                min="0"
+                max="75"
+                step="1"
+                value={appearance.wallpaperDim}
+                onChange={(event) => onChange("wallpaperDim", Number(event.target.value))}
+              />
+            </label>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function DataSettingsPanel({
+  historySettings,
+  onChange,
+  historyCount,
+  onClearHistory,
+  onExportData,
+  onImportData,
+}) {
+  const fileInput = useRef(null);
+  return (
+    <div className="data-settings">
+      <div className="data-summary-card">
+        <span className="data-summary-icon"><Database size={20} /></span>
+        <div>
+          <strong>本地记录</strong>
+          <p>历史与设置仅保存在当前设备，版本更新不会清空。</p>
+        </div>
+        <b>{historyCount} 条</b>
+      </div>
+
+      <section className="settings-section">
+        <label className="toggle-row data-toggle-row">
+          <input
+            type="checkbox"
+            checked={historySettings.enabled}
+            onChange={(event) => onChange("enabled", event.target.checked)}
+          />
+          <span>
+            <strong>保存新的编译记录</strong>
+            <small>关闭后停止新增记录，已有记录不会自动删除</small>
+          </span>
+        </label>
+      </section>
+
+      <section className="settings-section">
+        <label className="form-field">
+          <span>最多保留记录</span>
+          <select
+            value={historySettings.limit}
+            onChange={(event) => onChange("limit", Number(event.target.value))}
+          >
+            {[20, 50, 100, 200].map((limit) => (
+              <option value={limit} key={limit}>{limit} 条</option>
+            ))}
+          </select>
+          <small className="field-hint">降低上限时会删除超出部分，操作前会再次确认。</small>
+        </label>
+      </section>
+
+      <section className="settings-section data-backup-section">
+        <div className="settings-label">
+          <span>备份与恢复</span>
+          <small>JSON 不包含 API 密钥</small>
+        </div>
+        <div className="data-action-grid">
+          <button type="button" onClick={onExportData}>
+            <Download size={16} />
+            导出数据
+          </button>
+          <button type="button" onClick={() => fileInput.current?.click()}>
+            <Upload size={16} />
+            导入数据
+          </button>
+        </div>
+        <input
+          ref={fileInput}
+          className="visually-hidden"
+          type="file"
+          accept="application/json,.json"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) onImportData(file);
+            event.target.value = "";
+          }}
+        />
+      </section>
+
+      <section className="settings-section data-danger-zone">
+        <div>
+          <strong>删除全部历史</strong>
+          <p>删除后无法恢复，但不会影响模型设置与个性化配置。</p>
+        </div>
+        <button type="button" onClick={onClearHistory} disabled={!historyCount}>
+          <Trash2 size={15} />
+          清空记录
+        </button>
+      </section>
+    </div>
+  );
+}
+
 function SettingsDrawer({
   open,
   onClose,
@@ -723,9 +1065,22 @@ function SettingsDrawer({
   setAutoCheckUpdates,
   onCheckUpdates,
   onShowUpdate,
+  appearance,
+  setAppearance,
+  wallpaperUrl,
+  wallpaperBusy,
+  onSelectWallpaper,
+  onClearWallpaper,
+  historySettings,
+  setHistorySettings,
+  historyCount,
+  onClearHistory,
+  onExportData,
+  onImportData,
 }) {
   const [showKey, setShowKey] = useState(false);
   const [saveKey, setSaveKey] = useState(false);
+  const [activeSettingsTab, setActiveSettingsTab] = useState("models");
   const activeProvider = PROVIDER_PRESETS.find((item) => item.id === providerId) || PROVIDER_PRESETS[0];
   const endpointPreview = previewProviderEndpoint(providerState);
   const normalizedEndpoint = isOpenAICompatibleKind(providerState.kind)
@@ -747,15 +1102,41 @@ function SettingsDrawer({
       <aside className="settings-drawer" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div className="drawer-head">
           <div>
-            <span className="section-kicker">MODEL ROUTER</span>
-            <h2 id="settings-title">模型设置</h2>
+            <span className="section-kicker">APP SETTINGS</span>
+            <h2 id="settings-title">设置</h2>
           </div>
           <button type="button" className="icon-button" aria-label="关闭" onClick={onClose}>
             <X size={19} />
           </button>
         </div>
 
+        <div className="settings-tabs" role="tablist" aria-label="设置分类">
+          {[
+            { id: "models", label: "模型", icon: Bot },
+            { id: "appearance", label: "个性化", icon: Palette },
+            { id: "data", label: "数据", icon: Database },
+            { id: "updates", label: "更新", icon: DownloadCloud },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeSettingsTab === tab.id}
+                className={activeSettingsTab === tab.id ? "is-active" : ""}
+                key={tab.id}
+                onClick={() => setActiveSettingsTab(tab.id)}
+              >
+                <Icon size={15} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+
         <div className="drawer-scroll">
+          {activeSettingsTab === "models" && (
+            <>
           <div className="privacy-banner">
             <ShieldCheck size={18} />
             <p>
@@ -919,7 +1300,32 @@ function SettingsDrawer({
               )}
             </div>
           )}
+            </>
+          )}
 
+          {activeSettingsTab === "appearance" && (
+            <AppearanceSettingsPanel
+              appearance={appearance}
+              onChange={(key, value) => setAppearance((current) => ({ ...current, [key]: value }))}
+              wallpaperUrl={wallpaperUrl}
+              wallpaperBusy={wallpaperBusy}
+              onSelectWallpaper={onSelectWallpaper}
+              onClearWallpaper={onClearWallpaper}
+            />
+          )}
+
+          {activeSettingsTab === "data" && (
+            <DataSettingsPanel
+              historySettings={historySettings}
+              onChange={setHistorySettings}
+              historyCount={historyCount}
+              onClearHistory={onClearHistory}
+              onExportData={onExportData}
+              onImportData={onImportData}
+            />
+          )}
+
+          {activeSettingsTab === "updates" && (
           <section className="update-settings-card" aria-label="应用更新">
             <div className="update-settings-head">
               <span className="update-settings-icon"><DownloadCloud size={18} /></span>
@@ -978,6 +1384,7 @@ function SettingsDrawer({
               </p>
             )}
           </section>
+          )}
         </div>
 
         <div className="drawer-footer">
@@ -997,7 +1404,7 @@ function SettingsDrawer({
   );
 }
 
-function HistoryDrawer({ open, onClose, history, onRestore, onDelete, onClear }) {
+function HistoryDrawer({ open, onClose, history, historyEnabled, onRestore, onDelete, onClear }) {
   if (!open) return null;
   return (
     <div className="drawer-layer" role="presentation">
@@ -1014,7 +1421,10 @@ function HistoryDrawer({ open, onClose, history, onRestore, onDelete, onClear })
         </div>
         <div className="history-summary">
           <Clock3 size={18} />
-          <span>{history.length} 条记录，仅保存在当前设备</span>
+          <span>
+            {history.length} 条记录，仅保存在当前设备
+            {!historyEnabled ? "；自动保存已关闭" : ""}
+          </span>
         </div>
         <div className="history-list">
           {history.length ? (
@@ -1237,6 +1647,18 @@ export default function App() {
     ...readStorage(STORAGE_KEYS.providerConfigs, {}),
   }));
   const [history, setHistory] = useState(() => readStorage(STORAGE_KEYS.history, []));
+  const [appearance, setAppearance] = useState(() =>
+    normalizeAppearance(readStorage(STORAGE_KEYS.userSettings, {}).appearance),
+  );
+  const [historySettings, setHistorySettings] = useState(() =>
+    normalizeHistorySettings(readStorage(STORAGE_KEYS.userSettings, {}).history),
+  );
+  const [wallpaperUrl, setWallpaperUrl] = useState("");
+  const [wallpaperBusy, setWallpaperBusy] = useState(false);
+  const [dataReady, setDataReady] = useState(false);
+  const [systemDark, setSystemDark] = useState(
+    () => window.matchMedia?.("(prefers-color-scheme: dark)").matches || false,
+  );
 
   const provider = useMemo(
     () => ({
@@ -1261,6 +1683,58 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
+    let active = true;
+    loadUserData()
+      .then((data) => {
+        if (!active) return;
+        const saved = data.settings || {};
+        if (saved.providerId) setProviderIdState(saved.providerId);
+        if (saved.providerConfigs) {
+          setProviderConfigs((current) => ({
+            ...current,
+            ...saved.providerConfigs,
+          }));
+        }
+        if (typeof saved.autoCheckUpdates === "boolean") {
+          setAutoCheckUpdates(saved.autoCheckUpdates);
+        }
+        if (saved.appearance) setAppearance(normalizeAppearance(saved.appearance));
+        if (saved.history) setHistorySettings(normalizeHistorySettings(saved.history));
+        if (data.historyExists && !data.corrupt && Array.isArray(data.history)) {
+          setHistory(
+            data.history
+              .filter((item) => item?.id && item?.result)
+              .slice(0, normalizeHistorySettings(saved.history).limit),
+          );
+        } else if (Array.isArray(data.history) && data.history.length) {
+          setHistory(data.history);
+        }
+        setDataReady(true);
+        if (data.recovered) {
+          setToast({ type: "info", message: "本地数据已从备份恢复。" });
+        } else if (data.corrupt) {
+          setToast({ type: "error", message: "本地数据损坏，已使用可用副本启动。" });
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setDataReady(true);
+          setToast({ type: "error", message: "本地数据读取失败，本次将使用临时数据。" });
+        }
+      });
+
+    loadWallpaper()
+      .then((url) => {
+        if (active && url) setWallpaperUrl(url);
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.providerId, providerId);
     localStorage.setItem(
       STORAGE_KEYS.providerConfigs,
@@ -1276,14 +1750,72 @@ export default function App() {
   }, [providerConfigs, providerId]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.history, JSON.stringify(history));
-  }, [history]);
-
-  useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.autoCheckUpdates, String(autoCheckUpdates));
   }, [autoCheckUpdates]);
 
   useEffect(() => {
+    if (!dataReady) return undefined;
+    const timeout = window.setTimeout(() => {
+      saveUserSettings(
+        persistedSettings({
+          providerId,
+          providerConfigs,
+          autoCheckUpdates,
+          appearance,
+          historySettings,
+        }),
+      ).catch(() => {
+        setToast({ type: "error", message: "设置保存失败，请检查本地存储权限。" });
+      });
+    }, 260);
+    return () => window.clearTimeout(timeout);
+  }, [appearance, autoCheckUpdates, dataReady, historySettings, providerConfigs, providerId]);
+
+  useEffect(() => {
+    if (!dataReady || !historySettings.enabled) return undefined;
+    const timeout = window.setTimeout(() => {
+      saveHistory(history, historySettings.limit).catch(() => {
+        setToast({ type: "error", message: "历史记录保存失败。" });
+      });
+    }, 260);
+    return () => window.clearTimeout(timeout);
+  }, [dataReady, history, historySettings.enabled, historySettings.limit]);
+
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!media) return undefined;
+    const handleChange = (event) => setSystemDark(event.matches);
+    media.addEventListener("change", handleChange);
+    return () => media.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const fontScale =
+      FONT_SCALE_OPTIONS.find((option) => option.id === appearance.fontScale)?.value || 1;
+    root.dataset.mode = appearance.mode;
+    root.dataset.colorMode =
+      appearance.mode === "system" ? (systemDark ? "dark" : "light") : appearance.mode;
+    root.dataset.theme = appearance.theme;
+    root.style.setProperty("--text-scale", String(fontScale));
+    root.style.setProperty("--field-opacity", String(appearance.fieldOpacity / 100));
+    root.style.setProperty(
+      "--wallpaper-image",
+      wallpaperUrl && appearance.wallpaperEnabled ? `url("${wallpaperUrl}")` : "none",
+    );
+    root.style.setProperty(
+      "--wallpaper-fit",
+      appearance.wallpaperFit === "center" ? "auto" : appearance.wallpaperFit,
+    );
+    root.style.setProperty("--wallpaper-dim", String(appearance.wallpaperDim / 100));
+    root.style.setProperty(
+      "--wallpaper-overlay-opacity",
+      wallpaperUrl && appearance.wallpaperEnabled ? String(appearance.wallpaperDim / 100) : "0",
+    );
+  }, [appearance, systemDark, wallpaperUrl]);
+
+  useEffect(() => {
+    if (!dataReady) return undefined;
     const bridge = window.yangouDesktop;
     if (!bridge) return undefined;
 
@@ -1294,7 +1826,7 @@ export default function App() {
       .then((info) => {
         if (!active) return;
         setAppInfo(info);
-        if (localStorage.getItem(STORAGE_KEYS.autoCheckUpdates) !== "false") {
+        if (autoCheckUpdates) {
           timer = window.setTimeout(() => {
             if (active) checkForUpdates(false);
           }, 800);
@@ -1306,7 +1838,7 @@ export default function App() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, []);
+  }, [dataReady]);
 
   useEffect(() => {
     const handlePointerDown = (event) => {
@@ -1399,7 +1931,127 @@ export default function App() {
     }
   }
 
+  async function chooseWallpaper() {
+    setWallpaperBusy(true);
+    try {
+      const url = await selectWallpaper();
+      if (url) {
+        setWallpaperUrl(url);
+        setAppearance((current) => ({ ...current, wallpaperEnabled: true }));
+        setToast({ type: "success", message: "壁纸已应用。" });
+      }
+    } catch (error) {
+      setToast({ type: "error", message: error.message || "壁纸导入失败。" });
+    } finally {
+      setWallpaperBusy(false);
+    }
+  }
+
+  async function removeWallpaper() {
+    try {
+      await clearWallpaper();
+      setWallpaperUrl("");
+      setAppearance((current) => ({ ...current, wallpaperEnabled: false }));
+      setToast({ type: "success", message: "壁纸已移除。" });
+    } catch (error) {
+      setToast({ type: "error", message: error.message || "壁纸移除失败。" });
+    }
+  }
+
+  function updateHistorySettings(key, value) {
+    if (key === "limit" && history.length > value) {
+      const confirmed = window.confirm(`将只保留最近 ${value} 条记录，继续吗？`);
+      if (!confirmed) return;
+      setHistory((current) => current.slice(0, value));
+    }
+    setHistorySettings((current) => ({ ...current, [key]: value }));
+  }
+
+  async function clearHistoryRecords() {
+    if (!history.length || !window.confirm("确定删除全部编译历史吗？此操作无法恢复。")) return;
+    try {
+      await clearPersistedHistory();
+      setHistory([]);
+      localStorage.removeItem(STORAGE_KEYS.history);
+      setToast({ type: "success", message: "全部历史记录已删除。" });
+    } catch (error) {
+      setToast({ type: "error", message: error.message || "历史记录删除失败。" });
+    }
+  }
+
+  function exportUserData() {
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      settings: persistedSettings({
+        providerId,
+        providerConfigs,
+        autoCheckUpdates,
+        appearance,
+        historySettings,
+      }),
+      history,
+    };
+    payload.settings.providerConfigs = Object.fromEntries(
+      Object.entries(payload.settings.providerConfigs).map(([id, config]) => [
+        id,
+        { ...config, apiKey: "" },
+      ]),
+    );
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `yangou-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setToast({ type: "success", message: "本地数据已导出。" });
+  }
+
+  async function importUserData(file) {
+    try {
+      const payload = JSON.parse(await file.text());
+      if (payload?.schemaVersion !== 1 || !Array.isArray(payload.history)) {
+        throw new Error("不是有效的言构备份文件。");
+      }
+      if (!window.confirm("导入会替换当前历史记录并恢复个性化设置，继续吗？")) return;
+
+      const importedSettings = payload.settings || {};
+      const importedHistorySettings = normalizeHistorySettings(importedSettings.history);
+      const importedAppearance = normalizeAppearance(importedSettings.appearance);
+      const importedHistory = payload.history
+        .filter((item) => item?.id && item?.result)
+        .slice(0, importedHistorySettings.limit);
+
+      if (importedSettings.providerId) setProviderIdState(importedSettings.providerId);
+      if (importedSettings.providerConfigs) {
+        setProviderConfigs((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            Object.entries(importedSettings.providerConfigs).map(([id, config]) => [
+              id,
+              { ...config, apiKey: "" },
+            ]),
+          ),
+        }));
+      }
+      if (typeof importedSettings.autoCheckUpdates === "boolean") {
+        setAutoCheckUpdates(importedSettings.autoCheckUpdates);
+      }
+      setAppearance(importedAppearance);
+      setHistorySettings(importedHistorySettings);
+      setHistory(importedHistory);
+      await saveHistory(importedHistory, importedHistorySettings.limit);
+      setToast({ type: "success", message: `已导入 ${importedHistory.length} 条记录。` });
+    } catch (error) {
+      setToast({ type: "error", message: error.message || "备份导入失败。" });
+    }
+  }
+
   function addToHistory(compiledResult, sourceIdea, settings) {
+    if (!historySettings.enabled) return;
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       idea: sourceIdea,
@@ -1409,7 +2061,12 @@ export default function App() {
       result: compiledResult,
       createdAt: new Date().toISOString(),
     };
-    setHistory((current) => [entry, ...current.filter((item) => item.idea !== sourceIdea)].slice(0, 15));
+    setHistory((current) =>
+      [entry, ...current.filter((item) => item.idea !== sourceIdea)].slice(
+        0,
+        historySettings.limit,
+      ),
+    );
   }
 
   async function handleCompile(customAnswers = answers) {
@@ -1571,7 +2228,13 @@ export default function App() {
   }
 
   function deleteHistory(id) {
-    setHistory((current) => current.filter((item) => item.id !== id));
+    const nextHistory = history.filter((item) => item.id !== id);
+    setHistory(nextHistory);
+    if (dataReady) {
+      saveHistory(nextHistory, historySettings.limit).catch(() => {
+        setToast({ type: "error", message: "历史记录保存失败。" });
+      });
+    }
   }
 
   return (
@@ -1599,7 +2262,7 @@ export default function App() {
           </button>
           <button type="button" className="header-icon-button" onClick={() => setSettingsOpen(true)}>
             <Settings2 size={17} />
-            <span>模型</span>
+            <span>设置</span>
           </button>
           <button
             type="button"
@@ -1668,14 +2331,27 @@ export default function App() {
         setAutoCheckUpdates={setAutoCheckUpdates}
         onCheckUpdates={checkForUpdates}
         onShowUpdate={() => setUpdateDialogOpen(true)}
+        appearance={appearance}
+        setAppearance={setAppearance}
+        wallpaperUrl={wallpaperUrl}
+        wallpaperBusy={wallpaperBusy}
+        onSelectWallpaper={chooseWallpaper}
+        onClearWallpaper={removeWallpaper}
+        historySettings={historySettings}
+        setHistorySettings={updateHistorySettings}
+        historyCount={history.length}
+        onClearHistory={clearHistoryRecords}
+        onExportData={exportUserData}
+        onImportData={importUserData}
       />
       <HistoryDrawer
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         history={history}
+        historyEnabled={historySettings.enabled}
         onRestore={restoreHistory}
         onDelete={deleteHistory}
-        onClear={() => setHistory([])}
+        onClear={clearHistoryRecords}
       />
       <UpdateDialog
         open={updateDialogOpen}

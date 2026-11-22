@@ -1,6 +1,7 @@
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from "electron";
 import { loadEnvironment, startLocalServer } from "../server/app.mjs";
+import { createDataStore } from "./data-store.mjs";
 import { createUpdateManager } from "./update-manager.mjs";
 
 const isDev = process.argv.includes("--dev");
@@ -11,9 +12,13 @@ let mainWindow;
 let localServer;
 let isQuitting = false;
 let updateManager;
+let dataStore;
 
 app.setName("言构");
 app.setAppUserModelId(applicationId);
+if (isSmokeTest) {
+  app.setPath("userData", path.join(app.getPath("temp"), `yangou-smoke-${process.pid}`));
+}
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
@@ -100,7 +105,7 @@ async function createWindow() {
         "document.querySelector('h1')?.textContent.replace(/\\s+/g, ' ').trim()",
       );
       const desktopBridge = await mainWindow.webContents.executeJavaScript(
-        "window.yangouDesktop ? window.yangouDesktop.getAppInfo().then(async info => ({ available: true, info, update: await window.yangouDesktop.checkForUpdates(false) })) : { available: false }",
+        "window.yangouDesktop ? window.yangouDesktop.getAppInfo().then(async info => { const storage = await window.yangouDesktop.loadUserData(); await window.yangouDesktop.saveHistory([{ id: 'smoke', idea: 'test', result: { title: 'test' }, createdAt: new Date().toISOString() }], 100); const roundTrip = await window.yangouDesktop.loadUserData(); return { available: true, info, storage, historyRoundTrip: roundTrip.history?.length === 1, update: await window.yangouDesktop.checkForUpdates(false) }; }) : { available: false }",
       );
       console.log(
         JSON.stringify({
@@ -123,11 +128,21 @@ async function createWindow() {
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   updateManager = createUpdateManager({ app, shell });
+  dataStore = createDataStore({ app, dialog });
   ipcMain.handle("app:get-info", () => ({
     version: app.getVersion(),
     platform: process.platform,
     packaged: app.isPackaged,
   }));
+  ipcMain.handle("data:load", () => dataStore.load());
+  ipcMain.handle("data:save-settings", (_event, settings) => dataStore.saveSettings(settings));
+  ipcMain.handle("data:save-history", (_event, history, limit) =>
+    dataStore.saveHistory(history, limit),
+  );
+  ipcMain.handle("data:clear-history", () => dataStore.clearHistory());
+  ipcMain.handle("wallpaper:load", () => dataStore.loadWallpaper());
+  ipcMain.handle("wallpaper:select", () => dataStore.selectWallpaper(mainWindow));
+  ipcMain.handle("wallpaper:clear", () => dataStore.clearWallpaper());
   ipcMain.handle("update:check", (_event, options) =>
     updateManager.check({ manual: Boolean(options?.manual) }),
   );
