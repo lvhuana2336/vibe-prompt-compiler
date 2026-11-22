@@ -16,6 +16,7 @@ import {
   ExternalLink,
   FileCode2,
   Gauge,
+  HardDrive,
   History,
   KeyRound,
   Layers3,
@@ -50,6 +51,7 @@ import {
   normalizeOpenAIEndpoint,
   previewProviderEndpoint,
 } from "../shared/provider-endpoints.mjs";
+import { formatByteSize } from "../shared/update-utils.mjs";
 import {
   apiUrl,
   isNativeAndroid,
@@ -720,7 +722,7 @@ function SettingsDrawer({
   autoCheckUpdates,
   setAutoCheckUpdates,
   onCheckUpdates,
-  onOpenRelease,
+  onShowUpdate,
 }) {
   const [showKey, setShowKey] = useState(false);
   const [saveKey, setSaveKey] = useState(false);
@@ -933,9 +935,9 @@ function SettingsDrawer({
             {updateState?.status === "available" && (
               <div className="update-available-inline">
                 <span>发现新版本 v{updateState.latestVersion}</span>
-                <button type="button" onClick={() => onOpenRelease(updateState.releaseUrl)}>
-                  查看更新
-                  <ExternalLink size={14} />
+                <button type="button" onClick={onShowUpdate}>
+                  查看详情
+                  <ArrowRight size={14} />
                 </button>
               </div>
             )}
@@ -953,7 +955,10 @@ function SettingsDrawer({
                   onChange={(event) => setAutoCheckUpdates(event.target.checked)}
                   disabled={!window.yangouDesktop}
                 />
-                <span>启动时自动检查</span>
+                <span>
+                  <strong>启动时自动检测更新</strong>
+                  <small>发现新版本时弹窗询问</small>
+                </span>
               </label>
               <button
                 type="button"
@@ -1065,19 +1070,139 @@ function Toast({ toast }) {
   );
 }
 
-function UpdateBanner({ updateState, onOpenRelease }) {
-  if (updateState?.status !== "available") return null;
+function UpdateDialog({ open, updateState, onClose, onRetry, onUpdate }) {
+  if (!open || !updateState) return null;
+
+  const failed = updateState.status === "error";
+  const storage = updateState.storage;
+  const storageDelta =
+    typeof storage?.deltaBytes === "number"
+      ? `${formatByteSize(storage.deltaBytes, { signed: true })}${
+          storage.estimated ? "（估算）" : ""
+        }`
+      : "暂时无法估算";
+
   return (
-    <div className="update-banner" role="status">
-      <span className="update-banner-icon"><DownloadCloud size={17} /></span>
-      <div>
-        <strong>言构 v{updateState.latestVersion} 已发布</strong>
-        <span>当前版本 v{updateState.currentVersion}，可前往官方 Release 下载更新。</span>
-      </div>
-      <button type="button" onClick={() => onOpenRelease(updateState.releaseUrl)}>
-        查看更新
-        <ExternalLink size={14} />
-      </button>
+    <div className="update-dialog-layer">
+      <button
+        type="button"
+        className="update-dialog-backdrop"
+        aria-label={failed ? "关闭更新失败提示" : "稍后更新"}
+        onClick={onClose}
+      />
+      <section
+        className={`update-dialog ${failed ? "is-error" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="update-dialog-title"
+      >
+        <div className="update-dialog-head">
+          <span className="update-dialog-icon">
+            {failed ? <CircleAlert size={22} /> : <DownloadCloud size={22} />}
+          </span>
+          <div>
+            <span className="section-kicker">{failed ? "UPDATE CHECK" : "VERSION UPDATE"}</span>
+            <h2 id="update-dialog-title">
+              {failed ? "检查更新失败" : `发现新版本 v${updateState.latestVersion}`}
+            </h2>
+          </div>
+          <button type="button" className="update-dialog-close" aria-label="关闭" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {failed ? (
+          <>
+            <p className="update-dialog-error">{updateState.message || "暂时无法连接更新服务。"}</p>
+            <p className="update-dialog-hint">
+              自动检测失败不会影响本地编辑。你也可以稍后在“模型 → 应用更新”中重新检查。
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="update-version-route">
+              <span>
+                <small>当前</small>
+                v{updateState.currentVersion}
+              </span>
+              <ArrowRight size={17} />
+              <span className="is-latest">
+                <small>最新</small>
+                v{updateState.latestVersion}
+              </span>
+            </div>
+
+            <section className="update-notes" aria-labelledby="update-notes-title">
+              <div className="update-notes-head">
+                <strong id="update-notes-title">本次更新内容</strong>
+                {updateState.publishedAt && (
+                  <time dateTime={updateState.publishedAt}>
+                    {new Date(updateState.publishedAt).toLocaleDateString("zh-CN")}
+                  </time>
+                )}
+              </div>
+              <p>{updateState.notes || "本次更新暂未提供详细改动说明。"}</p>
+            </section>
+
+            <section className="update-storage" aria-labelledby="update-storage-title">
+              <div className="update-storage-head">
+                <span>
+                  <HardDrive size={16} />
+                  <strong id="update-storage-title">预计磁盘占用</strong>
+                </span>
+                <b>{storageDelta}</b>
+              </div>
+              <div className="storage-comparison">
+                <div>
+                  <small>更新前</small>
+                  <strong>{formatByteSize(storage?.currentBytes)}</strong>
+                  <span>当前安装目录</span>
+                </div>
+                <ArrowRight size={17} />
+                <div>
+                  <small>更新后</small>
+                  <strong>{formatByteSize(storage?.estimatedNextBytes)}</strong>
+                  <span>{storage?.estimated ? "保守估算" : "预计安装体积"}</span>
+                </div>
+              </div>
+              <p>
+                {storage?.installerBytes !== null && storage?.installerBytes !== undefined
+                  ? `下载安装包约 ${formatByteSize(storage.installerBytes)}，安装完成后会替换现有应用文件。`
+                  : "更新前会打开官方 Release 页面，请确认下载文件与版本号。"}
+                {storage?.estimated ? " 当前版本尚未附带精确安装体积，后项为保守估算。" : ""}
+              </p>
+            </section>
+          </>
+        )}
+
+        <div className="update-dialog-actions">
+          <button type="button" className="update-later-button" onClick={onClose}>
+            {failed ? "关闭" : "稍后更新"}
+          </button>
+          {failed ? (
+            <button
+              type="button"
+              className="update-primary-button"
+              onClick={() => {
+                onClose();
+                onRetry();
+              }}
+            >
+              <RefreshCw size={16} />
+              重新检查
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="update-primary-button"
+              onClick={() => onUpdate(updateState.downloadUrl || updateState.releaseUrl)}
+            >
+              前往官方下载
+              <ExternalLink size={15} />
+            </button>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -1103,6 +1228,7 @@ export default function App() {
   const [autoCheckUpdates, setAutoCheckUpdates] = useState(
     () => localStorage.getItem(STORAGE_KEYS.autoCheckUpdates) !== "false",
   );
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
   const [providerId, setProviderIdState] = useState(
     () => localStorage.getItem(STORAGE_KEYS.providerId) || "local",
   );
@@ -1162,16 +1288,19 @@ export default function App() {
     if (!bridge) return undefined;
 
     let active = true;
-    bridge.getAppInfo().then((info) => {
-      if (active) setAppInfo(info);
-    }).catch(() => {});
-
     let timer;
-    if (localStorage.getItem(STORAGE_KEYS.autoCheckUpdates) !== "false") {
-      timer = window.setTimeout(() => {
-        if (active) checkForUpdates(false);
-      }, 3500);
-    }
+    bridge
+      .getAppInfo()
+      .then((info) => {
+        if (!active) return;
+        setAppInfo(info);
+        if (localStorage.getItem(STORAGE_KEYS.autoCheckUpdates) !== "false") {
+          timer = window.setTimeout(() => {
+            if (active) checkForUpdates(false);
+          }, 800);
+        }
+      })
+      .catch(() => {});
 
     return () => {
       active = false;
@@ -1186,6 +1315,7 @@ export default function App() {
         !button ||
         button.disabled ||
         button.classList.contains("drawer-backdrop") ||
+        button.classList.contains("update-dialog-backdrop") ||
         window.matchMedia("(prefers-reduced-motion: reduce)").matches
       ) {
         return;
@@ -1241,15 +1371,13 @@ export default function App() {
     try {
       const update = await bridge.checkForUpdates(manual);
       setUpdateState(update);
-      if (!manual) return;
-      if (update.status === "available") {
-        setToast({ type: "success", message: `发现新版本 v${update.latestVersion}。` });
-      } else if (update.status === "up-to-date") {
+      if (update.status === "available" || update.status === "error") {
+        setUpdateDialogOpen(true);
+      }
+      if (manual && update.status === "up-to-date") {
         setToast({ type: "success", message: "当前已经是最新版本。" });
-      } else if (update.status === "development") {
+      } else if (manual && update.status === "development") {
         setToast({ type: "info", message: update.message });
-      } else if (update.status === "error") {
-        setToast({ type: "error", message: update.message });
       }
     } catch (error) {
       const failed = {
@@ -1258,13 +1386,14 @@ export default function App() {
         message: error.message || "更新检查失败。",
       };
       setUpdateState(failed);
-      if (manual) setToast({ type: "error", message: failed.message });
+      setUpdateDialogOpen(true);
     }
   }
 
   async function openUpdateRelease(releaseUrl) {
     try {
       await window.yangouDesktop?.openRelease(releaseUrl);
+      setUpdateDialogOpen(false);
     } catch (error) {
       setToast({ type: "error", message: error.message || "无法打开更新页面。" });
     }
@@ -1305,7 +1434,7 @@ export default function App() {
         addToHistory(localResult, idea, { taskType, targetTool, answers: customAnswers });
         setToast({
           type: "info",
-          message: "v0.2.0 的 Android 原生模型直连尚未启用，已生成本地结果。",
+          message: "当前版本的 Android 原生模型直连尚未启用，已生成本地结果。",
         });
         return;
       }
@@ -1487,8 +1616,6 @@ export default function App() {
         </div>
       </header>
 
-      <UpdateBanner updateState={updateState} onOpenRelease={openUpdateRelease} />
-
       {result ? (
         <ResultView
           result={result}
@@ -1540,7 +1667,7 @@ export default function App() {
         autoCheckUpdates={autoCheckUpdates}
         setAutoCheckUpdates={setAutoCheckUpdates}
         onCheckUpdates={checkForUpdates}
-        onOpenRelease={openUpdateRelease}
+        onShowUpdate={() => setUpdateDialogOpen(true)}
       />
       <HistoryDrawer
         open={historyOpen}
@@ -1549,6 +1676,13 @@ export default function App() {
         onRestore={restoreHistory}
         onDelete={deleteHistory}
         onClear={() => setHistory([])}
+      />
+      <UpdateDialog
+        open={updateDialogOpen}
+        updateState={updateState}
+        onClose={() => setUpdateDialogOpen(false)}
+        onRetry={() => checkForUpdates(true)}
+        onUpdate={openUpdateRelease}
       />
       <Toast toast={toast} />
     </div>

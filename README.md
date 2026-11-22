@@ -108,7 +108,7 @@ pnpm dist:win
 输出位置：
 
 ```text
-release/YanGou-Setup-0.2.0.exe
+release/YanGou-Setup-<version>.exe
 ```
 
 桌面版采用 Electron 主进程与本地回环服务：
@@ -124,7 +124,7 @@ release/YanGou-Setup-0.2.0.exe
 
 ![自动更新提示](docs/screenshots/update.png)
 
-> v0.2.0 不执行未签名静默安装更新。当前安装包未配置商业代码签名证书，首次运行时 Windows SmartScreen 可能显示“未知发布者”。公开发布前建议补充代码签名证书。
+> 当前版本不执行未签名静默安装更新。发现新版本后会展示改动和预计磁盘占用变化，并打开官方 Release 下载页。当前安装包未配置商业代码签名证书，首次运行时 Windows SmartScreen 可能显示“未知发布者”。
 
 ## Android 与 PWA
 
@@ -150,7 +150,7 @@ pnpm android:sync
 pnpm android:open
 ```
 
-当前环境没有 Android SDK，因此 v0.2.0 不提供已签名 APK。原生模型直连、Android Keystore 密钥存储和 APK 发布计划在 v0.2.1 完成。
+当前环境没有 Android SDK，因此暂不提供已签名 APK。原生模型直连、Android Keystore 密钥存储和正式 APK 发布仍需后续版本完成。
 
 如需为 Capacitor 构建连接远程模型代理，可设置：
 

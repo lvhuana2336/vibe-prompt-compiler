@@ -2,14 +2,42 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
   RELEASE_API_URL,
+  RELEASE_DOWNLOAD_URL_PREFIX,
+  RELEASE_METADATA_ASSET_NAME,
   RELEASE_URL_PREFIX,
+  buildStorageEstimate,
   compareVersions,
+  normalizeByteCount,
+  normalizeVersion,
+  parseReleaseMetadata,
   sanitizeReleaseNotes,
 } from "../shared/update-utils.mjs";
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const CACHE_SCHEMA_VERSION = 2;
 
-export function createUpdateManager({ app, shell }) {
+export async function measureDirectoryBytes(directory) {
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  const sizes = await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) return measureDirectoryBytes(entryPath);
+      if (entry.isFile()) {
+        const stats = await fs.stat(entryPath);
+        return stats.size;
+      }
+      return 0;
+    }),
+  );
+  return sizes.reduce((total, size) => total + size, 0);
+}
+
+export function createUpdateManager({
+  app,
+  shell,
+  fetchImpl = globalThis.fetch,
+  now = Date.now,
+}) {
   const cachePath = path.join(app.getPath("userData"), "update-check.json");
 
   async function readCache() {
@@ -23,9 +51,41 @@ export function createUpdateManager({ app, shell }) {
   async function writeCache(result) {
     try {
       await fs.mkdir(path.dirname(cachePath), { recursive: true });
-      await fs.writeFile(cachePath, JSON.stringify({ ...result, cachedAt: Date.now() }));
+      await fs.writeFile(
+        cachePath,
+        JSON.stringify({
+          ...result,
+          cacheSchemaVersion: CACHE_SCHEMA_VERSION,
+          cachedAt: now(),
+        }),
+      );
     } catch {
       // Update checks still work when the cache cannot be written.
+    }
+  }
+
+  async function readReleaseMetadata(asset, latestVersion) {
+    if (
+      !asset?.browser_download_url ||
+      !asset.browser_download_url.startsWith(RELEASE_DOWNLOAD_URL_PREFIX)
+    ) {
+      return null;
+    }
+
+    try {
+      const response = await fetchImpl(asset.browser_download_url, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": `YanGou/${app.getVersion()}`,
+        },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) return null;
+      const metadata = parseReleaseMetadata(await response.json());
+      if (!metadata || metadata.version !== normalizeVersion(latestVersion)) return null;
+      return metadata;
+    } catch {
+      return null;
     }
   }
 
@@ -41,13 +101,16 @@ export function createUpdateManager({ app, shell }) {
 
     if (!manual) {
       const cached = await readCache();
-      if (cached && Date.now() - Number(cached.cachedAt || 0) < CACHE_TTL_MS) {
+      if (
+        cached?.cacheSchemaVersion === CACHE_SCHEMA_VERSION &&
+        now() - Number(cached.cachedAt || 0) < CACHE_TTL_MS
+      ) {
         return { ...cached, cached: true };
       }
     }
 
     try {
-      const response = await fetch(RELEASE_API_URL, {
+      const response = await fetchImpl(RELEASE_API_URL, {
         headers: {
           Accept: "application/vnd.github+json",
           "User-Agent": `YanGou/${currentVersion}`,
@@ -65,6 +128,20 @@ export function createUpdateManager({ app, shell }) {
       const installer = (release.assets || []).find(
         (asset) => /\.exe$/i.test(asset.name) && /setup/i.test(asset.name),
       );
+      const metadataAsset = (release.assets || []).find(
+        (asset) => asset.name === RELEASE_METADATA_ASSET_NAME,
+      );
+      const releaseMetadata = hasUpdate
+        ? await readReleaseMetadata(metadataAsset, latestVersion)
+        : null;
+      const currentBytes = hasUpdate
+        ? await measureDirectoryBytes(path.dirname(app.getPath("exe"))).catch(() => null)
+        : null;
+      const storage = buildStorageEstimate({
+        currentBytes,
+        nextBytes: releaseMetadata?.installedBytes,
+        installerBytes: normalizeByteCount(installer?.size),
+      });
       const result = {
         status: hasUpdate ? "available" : "up-to-date",
         currentVersion,
@@ -73,7 +150,8 @@ export function createUpdateManager({ app, shell }) {
         downloadUrl: installer?.browser_download_url || release.html_url,
         publishedAt: release.published_at,
         notes: sanitizeReleaseNotes(release.body),
-        checkedAt: new Date().toISOString(),
+        storage,
+        checkedAt: new Date(now()).toISOString(),
       };
       await writeCache(result);
       return result;

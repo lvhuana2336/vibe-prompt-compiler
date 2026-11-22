@@ -12,6 +12,7 @@ const browser = await chromium.launch({
 });
 
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+page.setDefaultTimeout(12_000);
 const consoleErrors = [];
 page.on("console", (message) => {
   if (message.type() === "error") consoleErrors.push(message.text());
@@ -25,8 +26,11 @@ const heading = await page.locator("h1").first().innerText();
 const manifestHref = await page.locator('link[rel="manifest"]').getAttribute("href");
 const serviceWorkerState = await page.evaluate(async () => {
   if (!("serviceWorker" in navigator)) return "unsupported";
-  const registration = await navigator.serviceWorker.ready;
-  return registration.active?.state || "missing";
+  const registration = await Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise((resolve) => setTimeout(() => resolve(null), 3_000)),
+  ]);
+  return registration?.active?.state || "missing";
 });
 const initialOverflow = await page.evaluate(
   () => document.documentElement.scrollWidth - window.innerWidth,
@@ -80,25 +84,85 @@ await page.screenshot({ path: path.join(screenshotDir, "05-mobile-result.png"), 
 const updatePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await updatePage.addInitScript(() => {
   window.yangouDesktop = {
-    getAppInfo: async () => ({ version: "0.2.0", platform: "win32", packaged: true }),
+    getAppInfo: async () => ({ version: "0.2.1", platform: "win32", packaged: true }),
     checkForUpdates: async () => ({
       status: "available",
-      currentVersion: "0.2.0",
-      latestVersion: "0.2.1",
+      currentVersion: "0.2.1",
+      latestVersion: "0.2.2",
       releaseUrl:
-        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/tag/v0.2.1",
-      notes: "更新检查与桌面交互优化",
+        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/tag/v0.2.2",
+      downloadUrl:
+        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/download/v0.2.2/YanGou-Setup-0.2.2.exe",
+      publishedAt: "2026-11-22T00:00:00Z",
+      notes: "新增更新询问弹窗\n展示新版本改动与预计磁盘占用变化\n保留手动检查更新",
+      storage: {
+        currentBytes: 188_000_000,
+        estimatedNextBytes: 196_000_000,
+        deltaBytes: 8_000_000,
+        installerBytes: 72_000_000,
+        estimated: false,
+      },
     }),
     openRelease: async () => {},
   };
 });
 await updatePage.goto(baseUrl, { waitUntil: "networkidle" });
+await updatePage.locator(".update-dialog").waitFor();
+const autoUpdateDialogVisible = await updatePage.locator(".update-dialog").isVisible();
+const updateNotesVisible = (await updatePage.locator(".update-notes").innerText()).includes(
+  "更新询问弹窗",
+);
+const updateStorageVisible = (await updatePage.locator(".storage-comparison").innerText()).includes(
+  "更新前",
+);
+await updatePage.waitForTimeout(350);
+await updatePage.screenshot({ path: path.join(screenshotDir, "06-update-dialog.png"), fullPage: true });
+await updatePage.locator(".update-later-button").click();
 await updatePage.locator(".header-icon-button").last().click();
+const automaticUpdateToggle = updatePage.getByRole("checkbox", {
+  name: /启动时自动检测更新/,
+});
+const automaticUpdateEnabled = await automaticUpdateToggle.isChecked();
+await automaticUpdateToggle.uncheck();
+await updatePage.waitForFunction(
+  () => localStorage.getItem("yangou.updates.auto.v1") === "false",
+);
+const automaticUpdateDisabled = true;
+await updatePage.reload({ waitUntil: "networkidle" });
+await updatePage.waitForTimeout(1_200);
+const automaticUpdateDialogDisabled = (await updatePage.locator(".update-dialog").count()) === 0;
+await updatePage.locator(".header-icon-button").last().click();
+await updatePage
+  .getByRole("checkbox", { name: /启动时自动检测更新/ })
+  .check();
 await updatePage.getByRole("button", { name: "检查更新" }).click();
-await updatePage.locator(".update-banner").waitFor();
-const updateBannerVisible = await updatePage.locator(".update-banner").isVisible();
+await updatePage.locator(".update-dialog").waitFor();
+const manualUpdateDialogVisible = await updatePage.locator(".update-dialog").isVisible();
+await updatePage.locator(".update-dialog-close").click();
 await updatePage.locator(".settings-drawer .icon-button").click();
-await updatePage.screenshot({ path: path.join(screenshotDir, "06-update-available.png"), fullPage: true });
+
+const updateFailurePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+await updateFailurePage.addInitScript(() => {
+  window.yangouDesktop = {
+    getAppInfo: async () => ({ version: "0.2.1", platform: "win32", packaged: true }),
+    checkForUpdates: async () => ({
+      status: "error",
+      currentVersion: "0.2.1",
+      message: "更新服务暂时不可用。",
+    }),
+    openRelease: async () => {},
+  };
+});
+await updateFailurePage.goto(baseUrl, { waitUntil: "networkidle" });
+await updateFailurePage.locator(".update-dialog.is-error").waitFor();
+const automaticUpdateFailureVisible = await updateFailurePage
+  .locator(".update-dialog.is-error")
+  .isVisible();
+await updateFailurePage.waitForTimeout(350);
+await updateFailurePage.screenshot({
+  path: path.join(screenshotDir, "07-update-error.png"),
+  fullPage: true,
+});
 
 console.log(
   JSON.stringify(
@@ -117,7 +181,14 @@ console.log(
       stagedContainsVerification,
       providerCount,
       updateSettingsVisible,
-      updateBannerVisible,
+      autoUpdateDialogVisible,
+      updateNotesVisible,
+      updateStorageVisible,
+      automaticUpdateEnabled,
+      automaticUpdateDisabled,
+      automaticUpdateDialogDisabled,
+      manualUpdateDialogVisible,
+      automaticUpdateFailureVisible,
       consoleErrors,
       screenshots: screenshotDir,
     },
