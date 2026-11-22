@@ -88,6 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $assets = Get-ChildItem -LiteralPath release -Filter "YanGou-Setup-*.exe" | ForEach-Object FullName
+          $assets = @(Get-ChildItem -LiteralPath release -Filter "YanGou-Setup-*.exe" | ForEach-Object FullName)
           $metadata = (Resolve-Path -LiteralPath release/release-metadata.json).Path
-          gh release create $env:GITHUB_REF_NAME @($assets + $metadata) --title $env:GITHUB_REF_NAME --generate-notes
+          $files = @($assets) + @($metadata)
+          gh release create $env:GITHUB_REF_NAME @files --title $env:GITHUB_REF_NAME --generate-notes
