@@ -2,7 +2,7 @@ import path from "node:path";
 import express from "express";
 import { callProvider, probeProvider } from "./model-adapters.mjs";
 
-const systemPrompt = `你是「言构」的首席需求编译器，擅长把普通人的自然语言想法转换成 AI 编程智能体能够高准确率执行的开发提示词。
+const codingSystemPrompt = `你是「言构」的首席需求编译器，擅长把普通人的自然语言想法转换成 AI 编程智能体能够高准确率执行的开发提示词。
 
 你的工作不是简单润色，而是补齐真正影响交付的信息：
 1. 识别产品类型、用户、目标、现有工程上下文和任务类型。
@@ -15,7 +15,20 @@ const systemPrompt = `你是「言构」的首席需求编译器，擅长把普�
 
 只返回一个合法 JSON 对象，不要使用 Markdown 代码围栏。字段与结构必须遵循请求中的说明。所有面向用户的内容使用简体中文。`;
 
-function buildAiUserPrompt(payload) {
+const contentSystemPrompt = `你是「言构」的首席内容提示词编译器，擅长把商务写作、数据分析和营销内容需求转换成可直接交给 AI 工具执行的完整提示词。
+
+工作原则：
+1. 先识别业务方向、具体场景、目标受众、已知事实、产出格式和目标工具。
+2. 保留用户提供的事实；不得虚构数据、客户、引用、产品参数或品牌结论。
+3. 只提出最多 3 个真正阻塞交付的问题。
+4. 商务写作强调目的、受众、语气、结构和下一步行动。
+5. 数据分析强调字段、指标、公式、异常处理、图表和证据边界。
+6. 营销内容强调受众、渠道、卖点、品牌口吻和行动号召。
+7. PPT、Word、Excel、PDF 和图像提示词必须使用对应产出格式的专属结构。
+
+只返回一个合法 JSON 对象，不要使用 Markdown 代码围栏。所有面向用户的内容使用简体中文。`;
+
+function buildCodingAiUserPrompt(payload) {
   return `请编译下面的需求，并在本地草稿基础上提升准确性。不要省略可执行细节。
 
 ## 原始需求
@@ -59,6 +72,54 @@ ${JSON.stringify(payload.localDraft || {}, null, 2)}
 - 如果本地草稿已经准确，可以保留其事实，不要为了差异化而改坏技术约束。`;
 }
 
+function buildContentAiUserPrompt(payload) {
+  return `请编译下面的内容创作任务，并在本地草稿基础上提升完整度和可执行性。
+
+## 原始需求
+${payload.idea}
+
+## 功能选择
+- 业务方向：${payload.contentDomain || "business-writing"}
+- 具体场景：${payload.contentScene || "auto"}
+- 产出格式：${payload.contentArtifact || "text"}
+- 目标工具：${payload.targetTool || "general"}
+
+## 已补充的澄清
+${JSON.stringify(payload.answers || {}, null, 2)}
+
+## 本地编译草稿
+${JSON.stringify(payload.localDraft || {}, null, 2)}
+
+## 返回 JSON 结构
+{
+  "title": "简短内容任务标题，不超过 28 字",
+  "summary": "用一句话概括业务方向和产出",
+  "score": 0到100,
+  "prompt": "可直接发送给目标 AI 的完整提示词，使用 Markdown 结构，并包含产出格式专属要求",
+  "stagedPrompt": "分三阶段执行的提示词",
+  "concisePrompt": "精简的一键执行版提示词",
+  "checklist": ["可逐项验证的内容验收标准"],
+  "questions": [{"id":"英文短id","question":"最多3个真正重要的问题","reason":"为什么重要","options":["可选答案"]}],
+  "spec": [{"title":"章节名","items":["条目"]}],
+  "risks": [{"level":"high|medium|low","text":"风险与补救建议"}],
+  "dimensions": [
+    {"key":"goal","label":"目标清晰度","value":0到100},
+    {"key":"audience","label":"受众与场景","value":0到100},
+    {"key":"structure","label":"内容结构","value":0到100},
+    {"key":"constraint","label":"格式约束","value":0到100},
+    {"key":"acceptance","label":"验收质量","value":0到100},
+    {"key":"execution","label":"可执行性","value":0到100}
+  ]
+}
+
+要求：
+- prompt、stagedPrompt 和 concisePrompt 必须自包含。
+- 不得把未提供的数字、引用或品牌事实写成已知事实。
+- Excel 必须包含字段、公式、数据验证和异常处理。
+- 图像提示词必须包含主体、构图、风格、光线、比例和负面提示。
+- 不要复制本地草稿中的冗余排版，只提升内容准确性和可执行性。`;
+}
+
 export function loadEnvironment(root) {
   try {
     process.loadEnvFile?.(path.join(root, ".env"));
@@ -98,8 +159,11 @@ export async function startLocalServer({ root, isDev = false, port = 0 }) {
     try {
       const output = await callProvider({
         config: payload.provider,
-        system: systemPrompt,
-        user: buildAiUserPrompt(payload),
+        system: payload.compileKind === "content" ? contentSystemPrompt : codingSystemPrompt,
+        user:
+          payload.compileKind === "content"
+            ? buildContentAiUserPrompt(payload)
+            : buildCodingAiUserPrompt(payload),
       });
       response.json(output);
     } catch (error) {

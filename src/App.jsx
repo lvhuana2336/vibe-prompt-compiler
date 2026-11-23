@@ -48,10 +48,21 @@ import {
   TOOL_PRESETS,
 } from "./data/providers.js";
 import {
+  ARTIFACT_PRESETS,
+  CONTENT_EXAMPLES,
+  CONTENT_TARGETS,
+  CREATION_MODES,
+  getArtifactPreset,
+  getContentScenes,
+  getContentTarget,
+  getModePreset,
+} from "./data/scenes.js";
+import {
   compileLocally,
   getPromptForTab,
   mergeAiResult,
 } from "./lib/compiler.js";
+import { compileContentLocally } from "./lib/content-compiler.js";
 import {
   describeProtocol,
   isOpenAICompatibleKind,
@@ -172,6 +183,10 @@ function persistedSettings({
   autoCheckUpdates,
   appearance,
   historySettings,
+  creationMode,
+  contentScene,
+  artifactType,
+  contentTarget,
 }) {
   return {
     schemaVersion: 1,
@@ -186,6 +201,12 @@ function persistedSettings({
     autoCheckUpdates,
     appearance,
     history: historySettings,
+    creation: {
+      mode: creationMode,
+      scene: contentScene,
+      artifact: artifactType,
+      target: contentTarget,
+    },
   };
 }
 
@@ -272,7 +293,7 @@ function ScoreOverview({ score, dimensions, caption, status, description, compac
   return (
     <>
       <div className={`live-score ${compact ? "is-compact" : ""}`}>
-        <ScoreRing score={score} size={compact ? "medium" : "large"} />
+        <ScoreRing score={score} size={compact ? "medium" : "large"} label={caption} />
         <div>
           <span className="score-caption">{caption}</span>
           <strong>{status}</strong>
@@ -298,7 +319,7 @@ function EmptyInspector() {
         <WandSparkles size={28} strokeWidth={1.6} />
       </div>
       <h3>好指令，从补齐上下文开始。</h3>
-      <p>输入想法后，这里会实时检查目标、交互、技术边界和验收标准。</p>
+      <p>输入想法后，这里会实时检查目标、受众、结构、约束和验收标准。</p>
       <div className="inspector-promises">
         <span><Check size={14} /> 发现隐含需求</span>
         <span><Check size={14} /> 生成关键追问</span>
@@ -319,11 +340,11 @@ function LiveInspector({ preview }) {
       <ScoreOverview
         score={preview.score}
         dimensions={preview.dimensions}
-        caption="需求完整度"
+        caption={preview.compileKind === "content" ? "内容完整度" : "需求完整度"}
         status={
           preview.score >= 78 ? "可以开始执行" : preview.score >= 60 ? "接近可用" : "还缺少关键线索"
         }
-        description="随输入与补充实时更新"
+        description={preview.compileKind === "content" ? "随场景与资料实时更新" : "随输入与补充实时更新"}
       />
       <div className="gap-block">
         <div className="gap-title">
@@ -352,19 +373,210 @@ function LiveInspector({ preview }) {
   );
 }
 
-function Composer({
-  idea,
-  setIdea,
+function FunctionDrawer({
+  open,
+  onClose,
+  creationMode,
+  setCreationMode,
   taskType,
   setTaskType,
   targetTool,
   setTargetTool,
+  contentScene,
+  setContentScene,
+  artifactType,
+  setArtifactType,
+  contentTarget,
+  setContentTarget,
+}) {
+  if (!open) return null;
+  const mode = getModePreset(creationMode);
+  const artifact = getArtifactPreset(artifactType);
+  const scenes = creationMode === "code" ? [] : getContentScenes(creationMode);
+
+  return (
+    <div className="drawer-layer" role="presentation">
+      <button type="button" className="drawer-backdrop" aria-label="关闭功能选择" onClick={onClose} />
+      <aside
+        className="function-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="function-drawer-title"
+      >
+        <div className="drawer-head">
+          <div>
+            <span className="section-kicker">WHAT DO YOU WANT TO CREATE</span>
+            <h2 id="function-drawer-title">选择功能</h2>
+          </div>
+          <button type="button" className="icon-button" aria-label="关闭" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </div>
+
+        <div className="drawer-scroll function-drawer-scroll">
+          <section className="settings-section">
+            <div className="settings-label">
+              <span>工作类型</span>
+              <small>当前：{mode.name}</small>
+            </div>
+            <div className="creation-mode-grid">
+              {CREATION_MODES.map((item) => (
+                <button
+                  type="button"
+                  className={creationMode === item.id ? "is-selected" : ""}
+                  key={item.id}
+                  onClick={() => {
+                    setCreationMode(item.id);
+                    setContentScene("auto");
+                  }}
+                >
+                  <strong>{item.name}</strong>
+                  <small>{item.description}</small>
+                  {creationMode === item.id && <Check size={15} />}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {creationMode === "code" ? (
+            <>
+              <section className="settings-section">
+                <div className="settings-label">
+                  <span>开发任务</span>
+                  <small>自动识别适合不确定时使用</small>
+                </div>
+                <div className="function-option-grid">
+                  {TASK_PRESETS.map((task) => (
+                    <button
+                      type="button"
+                      className={taskType === task.id ? "is-selected" : ""}
+                      key={task.id}
+                      onClick={() => setTaskType(task.id)}
+                    >
+                      {task.name}
+                    </button>
+                  ))}
+                </div>
+              </section>
+              <section className="settings-section">
+                <label className="form-field">
+                  <span>交给哪个编程工具</span>
+                  <select value={targetTool} onChange={(event) => setTargetTool(event.target.value)}>
+                    {TOOL_PRESETS.map((tool) => (
+                      <option value={tool.id} key={tool.id}>{tool.name} · {tool.note}</option>
+                    ))}
+                  </select>
+                </label>
+              </section>
+            </>
+          ) : (
+            <>
+              <section className="settings-section">
+                <div className="settings-label">
+                  <span>具体场景</span>
+                  <small>可以保持自动判断</small>
+                </div>
+                <div className="function-option-grid">
+                  {scenes.map((scene) => (
+                    <button
+                      type="button"
+                      className={contentScene === scene.id ? "is-selected" : ""}
+                      key={scene.id}
+                      onClick={() => setContentScene(scene.id)}
+                    >
+                      {scene.name}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="settings-section">
+                <div className="settings-label">
+                  <span>产出格式</span>
+                  <small>生成提示词与结构，不直接生成二进制文件</small>
+                </div>
+                <div className="artifact-option-grid">
+                  {ARTIFACT_PRESETS.map((item) => (
+                    <button
+                      type="button"
+                      className={artifactType === item.id ? "is-selected" : ""}
+                      key={item.id}
+                      onClick={() => setArtifactType(item.id)}
+                    >
+                      <span>{item.shortName}</span>
+                      <small>{item.name}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="settings-section">
+                <label className="form-field">
+                  <span>目标 AI 或办公工具</span>
+                  <select
+                    value={contentTarget}
+                    onChange={(event) => setContentTarget(event.target.value)}
+                  >
+                    {CONTENT_TARGETS.map((target) => (
+                      <option value={target.id} key={target.id}>{target.name}</option>
+                    ))}
+                  </select>
+                </label>
+              </section>
+            </>
+          )}
+
+          <div className="function-drawer-note">
+            <Sparkles size={16} />
+            <p>
+              当前选择：{mode.name}
+              {creationMode === "code" ? ` · ${TASK_PRESETS.find((item) => item.id === taskType)?.name}` : ` · ${artifact.name}`}
+            </p>
+          </div>
+        </div>
+
+        <div className="drawer-footer">
+          <span className="function-drawer-summary">
+            {creationMode === "code"
+              ? `交给 ${TOOL_PRESETS.find((item) => item.id === targetTool)?.name}`
+              : `${getContentTarget(contentTarget).name} · ${artifact.name}`}
+          </span>
+          <button type="button" className="primary-action" onClick={onClose}>
+            完成
+          </button>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function Composer({
+  idea,
+  setIdea,
+  creationMode,
+  taskType,
+  targetTool,
+  contentScene,
+  artifactType,
+  contentTarget,
+  onOpenFunctionDrawer,
   preview,
   provider,
   onCompile,
   isCompiling,
 }) {
   const textareaRef = useRef(null);
+  const mode = getModePreset(creationMode);
+  const artifact = getArtifactPreset(artifactType);
+  const examples = creationMode === "code" ? EXAMPLE_IDEAS : CONTENT_EXAMPLES[creationMode] || [];
+  const sceneName =
+    creationMode === "code"
+      ? TASK_PRESETS.find((item) => item.id === taskType)?.name
+      : getContentScenes(creationMode).find((item) => item.id === contentScene)?.name;
+  const targetName =
+    creationMode === "code"
+      ? TOOL_PRESETS.find((item) => item.id === targetTool)?.name
+      : getContentTarget(contentTarget).name;
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
@@ -374,33 +586,37 @@ function Composer({
       <div className="composer-heading">
         <div>
           <span className="section-kicker">01 / DEFINE THE INTENT</span>
-          <h2>你想做出什么？</h2>
-          <p>直接用日常语言描述，不需要懂提示词或技术术语。</p>
+          <h2>{creationMode === "code" ? "你想做出什么？" : "你想生成什么内容？"}</h2>
+          <p>直接用日常语言描述，功能与格式可以在抽屉里调整。</p>
         </div>
         <div className="character-count">{idea.trim().length} 字</div>
       </div>
 
-      <div className="task-tabs" role="tablist" aria-label="任务类型">
-        {TASK_PRESETS.map((task) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={taskType === task.id}
-            className={taskType === task.id ? "is-active" : ""}
-            key={task.id}
-            onClick={() => setTaskType(task.id)}
-          >
-            {task.name}
-          </button>
-        ))}
-      </div>
+      <button type="button" className="function-trigger" onClick={onOpenFunctionDrawer}>
+        <span className="function-trigger-icon"><SlidersHorizontal size={18} /></span>
+        <span className="function-trigger-copy">
+          <small>当前功能</small>
+          <strong>
+            {mode.name}
+            {creationMode === "code" ? ` · ${sceneName || "自动识别"}` : ` · ${artifact.name}`}
+          </strong>
+        </span>
+        <span className="function-trigger-meta">
+          {creationMode === "code" ? targetName : `${sceneName || "自动判断"} · ${targetName}`}
+        </span>
+        <ChevronDown size={16} />
+      </button>
 
       <div className="idea-field">
         <textarea
           ref={textareaRef}
           value={idea}
           onChange={(event) => setIdea(event.target.value)}
-          placeholder="例如：我想做一个记录每天喝水的小程序，界面清爽一点，喝完可以打卡，最好每天能提醒我……"
+          placeholder={
+            creationMode === "code"
+              ? "例如：我想做一个记录每天喝水的小程序，界面清爽一点，喝完可以打卡，最好每天能提醒我……"
+              : `例如：${examples[0] || "描述你希望生成的内容、受众和已知资料……"}`
+          }
           rows={7}
           maxLength={3000}
           onKeyDown={(event) => {
@@ -420,25 +636,16 @@ function Composer({
 
       <div className="example-row">
         <span>试试：</span>
-        {EXAMPLE_IDEAS.map((example, index) => (
+        {examples.map((example, index) => (
           <button type="button" key={example} onClick={() => setIdea(example)}>
-            {["日常打卡", "后台功能", "修复页面"][index]}
+            {creationMode === "code"
+              ? ["日常打卡", "后台功能", "修复页面"][index]
+              : example.slice(0, 8)}
           </button>
         ))}
       </div>
 
       <div className="composer-controls">
-        <label className="select-control">
-          <Bot size={16} />
-          <span>交给</span>
-          <select value={targetTool} onChange={(event) => setTargetTool(event.target.value)}>
-            {TOOL_PRESETS.map((tool) => (
-              <option value={tool.id} key={tool.id}>{tool.name}</option>
-            ))}
-          </select>
-          <ChevronDown size={14} />
-        </label>
-
         <div className="provider-control" title="在顶部“模型”入口中配置">
           <span className={`provider-status-dot ${provider.kind === "local" ? "is-local" : ""}`} />
           {provider.kind === "local" ? "本地编译" : provider.model || "配置模型"}
@@ -476,10 +683,13 @@ function Composer({
 function IntroView({
   idea,
   setIdea,
+  creationMode,
   taskType,
-  setTaskType,
   targetTool,
-  setTargetTool,
+  contentScene,
+  artifactType,
+  contentTarget,
+  onOpenFunctionDrawer,
   preview,
   provider,
   onCompile,
@@ -507,10 +717,13 @@ function IntroView({
         <Composer
           idea={idea}
           setIdea={setIdea}
+          creationMode={creationMode}
           taskType={taskType}
-          setTaskType={setTaskType}
           targetTool={targetTool}
-          setTargetTool={setTargetTool}
+          contentScene={contentScene}
+          artifactType={artifactType}
+          contentTarget={contentTarget}
+          onOpenFunctionDrawer={onOpenFunctionDrawer}
           preview={preview}
           provider={provider}
           onCompile={onCompile}
@@ -564,7 +777,7 @@ function ResultInspector({
         <ScoreOverview
           score={result.score}
           dimensions={result.dimensions}
-          caption="需求完整度"
+          caption={result.compileKind === "content" ? "内容完整度" : "需求完整度"}
           status={result.score >= 80 ? "可以开始执行" : "建议补充后执行"}
           description={result.summary}
           compact
@@ -686,7 +899,11 @@ function ResultView({
           <span className="section-kicker">COMPILED BRIEF</span>
           <div>
             <h1>{result.title}</h1>
-            <span>{TASK_NAMES[result.requirement?.taskType] || "开发任务"}</span>
+            <span>
+              {result.categoryLabel ||
+                TASK_NAMES[result.requirement?.taskType] ||
+                "开发任务"}
+            </span>
           </div>
         </div>
         <div className="result-actions">
@@ -1624,6 +1841,11 @@ export default function App() {
   const [answers, setAnswers] = useState({});
   const [result, setResult] = useState(null);
   const [isCompiling, setIsCompiling] = useState(false);
+  const [creationMode, setCreationMode] = useState("code");
+  const [contentScene, setContentScene] = useState("auto");
+  const [artifactType, setArtifactType] = useState("auto");
+  const [contentTarget, setContentTarget] = useState("general");
+  const [functionDrawerOpen, setFunctionDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [toast, setToast] = useState(null);
@@ -1673,8 +1895,18 @@ export default function App() {
 
   const preview = useMemo(() => {
     if (!idea.trim()) return null;
+    if (creationMode !== "code") {
+      return compileContentLocally({
+        idea,
+        domain: creationMode,
+        artifact: artifactType,
+        scene: contentScene,
+        target: contentTarget,
+        answers,
+      });
+    }
     return compileLocally({ idea, taskType, targetTool, answers });
-  }, [idea, taskType, targetTool, answers]);
+  }, [answers, artifactType, contentScene, contentTarget, creationMode, idea, targetTool, taskType]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -1700,6 +1932,16 @@ export default function App() {
         }
         if (saved.appearance) setAppearance(normalizeAppearance(saved.appearance));
         if (saved.history) setHistorySettings(normalizeHistorySettings(saved.history));
+        if (CREATION_MODES.some((mode) => mode.id === saved.creation?.mode)) {
+          setCreationMode(saved.creation.mode);
+        }
+        if (typeof saved.creation?.scene === "string") setContentScene(saved.creation.scene);
+        if (ARTIFACT_PRESETS.some((artifact) => artifact.id === saved.creation?.artifact)) {
+          setArtifactType(saved.creation.artifact);
+        }
+        if (CONTENT_TARGETS.some((target) => target.id === saved.creation?.target)) {
+          setContentTarget(saved.creation.target);
+        }
         if (data.historyExists && !data.corrupt && Array.isArray(data.history)) {
           setHistory(
             data.history
@@ -1763,13 +2005,28 @@ export default function App() {
           autoCheckUpdates,
           appearance,
           historySettings,
+          creationMode,
+          contentScene,
+          artifactType,
+          contentTarget,
         }),
       ).catch(() => {
         setToast({ type: "error", message: "设置保存失败，请检查本地存储权限。" });
       });
     }, 260);
     return () => window.clearTimeout(timeout);
-  }, [appearance, autoCheckUpdates, dataReady, historySettings, providerConfigs, providerId]);
+  }, [
+    appearance,
+    artifactType,
+    autoCheckUpdates,
+    contentScene,
+    contentTarget,
+    creationMode,
+    dataReady,
+    historySettings,
+    providerConfigs,
+    providerId,
+  ]);
 
   useEffect(() => {
     if (!dataReady || !historySettings.enabled) return undefined;
@@ -1872,6 +2129,12 @@ export default function App() {
   function chooseProvider(id) {
     setProviderIdState(id);
     setTestResult(null);
+  }
+
+  function chooseCreationMode(id) {
+    setCreationMode(id);
+    setContentScene("auto");
+    setAnswers({});
   }
 
   function setProviderConfig(key, value) {
@@ -1989,6 +2252,10 @@ export default function App() {
         autoCheckUpdates,
         appearance,
         historySettings,
+        creationMode,
+        contentScene,
+        artifactType,
+        contentTarget,
       }),
       history,
     };
@@ -2040,6 +2307,18 @@ export default function App() {
       if (typeof importedSettings.autoCheckUpdates === "boolean") {
         setAutoCheckUpdates(importedSettings.autoCheckUpdates);
       }
+      if (CREATION_MODES.some((mode) => mode.id === importedSettings.creation?.mode)) {
+        setCreationMode(importedSettings.creation.mode);
+      }
+      if (typeof importedSettings.creation?.scene === "string") {
+        setContentScene(importedSettings.creation.scene);
+      }
+      if (ARTIFACT_PRESETS.some((artifact) => artifact.id === importedSettings.creation?.artifact)) {
+        setArtifactType(importedSettings.creation.artifact);
+      }
+      if (CONTENT_TARGETS.some((target) => target.id === importedSettings.creation?.target)) {
+        setContentTarget(importedSettings.creation.target);
+      }
       setAppearance(importedAppearance);
       setHistorySettings(importedHistorySettings);
       setHistory(importedHistory);
@@ -2057,6 +2336,10 @@ export default function App() {
       idea: sourceIdea,
       taskType: settings.taskType,
       targetTool: settings.targetTool,
+      creationMode: settings.creationMode || "code",
+      contentScene: settings.contentScene || "auto",
+      artifactType: settings.artifactType || "auto",
+      contentTarget: settings.contentTarget || "general",
       answers: settings.answers,
       result: compiledResult,
       createdAt: new Date().toISOString(),
@@ -2075,12 +2358,31 @@ export default function App() {
       return;
     }
 
-    const localResult = compileLocally({ idea, taskType, targetTool, answers: customAnswers });
+    const localResult =
+      creationMode === "code"
+        ? compileLocally({ idea, taskType, targetTool, answers: customAnswers })
+        : compileContentLocally({
+            idea,
+            domain: creationMode,
+            artifact: artifactType,
+            scene: contentScene,
+            target: contentTarget,
+            answers: customAnswers,
+          });
+    const historyState = {
+      taskType,
+      targetTool,
+      answers: customAnswers,
+      creationMode,
+      contentScene,
+      artifactType,
+      contentTarget,
+    };
     setResult(localResult);
     window.scrollTo({ top: 0, behavior: "smooth" });
 
     if (provider.kind === "local") {
-      addToHistory(localResult, idea, { taskType, targetTool, answers: customAnswers });
+      addToHistory(localResult, idea, historyState);
       return;
     }
 
@@ -2088,7 +2390,7 @@ export default function App() {
     setToast({ type: "info", message: "本地版本已就绪，正在调用模型深度编译…" });
     try {
       if (isNativeAndroid && !remoteApiBaseUrl) {
-        addToHistory(localResult, idea, { taskType, targetTool, answers: customAnswers });
+        addToHistory(localResult, idea, historyState);
         setToast({
           type: "info",
           message: "当前版本的 Android 原生模型直连尚未启用，已生成本地结果。",
@@ -2103,6 +2405,10 @@ export default function App() {
           idea,
           taskType,
           targetTool,
+          compileKind: localResult.compileKind || "code",
+          contentDomain: creationMode === "code" ? "" : creationMode,
+          contentScene,
+          contentArtifact: localResult.requirement?.artifact || artifactType,
           answers: customAnswers,
           localDraft: {
             title: localResult.title,
@@ -2123,10 +2429,10 @@ export default function App() {
       enhanced.provider = providerPreset.name;
       enhanced.model = data.model;
       setResult(enhanced);
-      addToHistory(enhanced, idea, { taskType, targetTool, answers: customAnswers });
+      addToHistory(enhanced, idea, historyState);
       setToast({ type: "success", message: `已用 ${providerPreset.name} 完成深度编译。` });
     } catch (error) {
-      addToHistory(localResult, idea, { taskType, targetTool, answers: customAnswers });
+      addToHistory(localResult, idea, historyState);
       setToast({
         type: "error",
         message: `模型连接失败，已保留本地结果：${error.message}`,
@@ -2221,6 +2527,10 @@ export default function App() {
     setIdea(item.idea);
     setTaskType(item.taskType || "auto");
     setTargetTool(item.targetTool || "codex");
+    setCreationMode(item.creationMode || item.result?.requirement?.contentDomain || "code");
+    setContentScene(item.contentScene || item.result?.requirement?.scene || "auto");
+    setArtifactType(item.artifactType || item.result?.requirement?.artifact || "auto");
+    setContentTarget(item.contentTarget || item.result?.requirement?.targetTool || "general");
     setAnswers(item.answers || {});
     setResult(item.result);
     setHistoryOpen(false);
@@ -2296,10 +2606,13 @@ export default function App() {
         <IntroView
           idea={idea}
           setIdea={setIdea}
+          creationMode={creationMode}
           taskType={taskType}
-          setTaskType={setTaskType}
           targetTool={targetTool}
-          setTargetTool={setTargetTool}
+          contentScene={contentScene}
+          artifactType={artifactType}
+          contentTarget={contentTarget}
+          onOpenFunctionDrawer={() => setFunctionDrawerOpen(true)}
           preview={preview}
           provider={provider}
           onCompile={() => handleCompile(answers)}
@@ -2352,6 +2665,22 @@ export default function App() {
         onRestore={restoreHistory}
         onDelete={deleteHistory}
         onClear={clearHistoryRecords}
+      />
+      <FunctionDrawer
+        open={functionDrawerOpen}
+        onClose={() => setFunctionDrawerOpen(false)}
+        creationMode={creationMode}
+        setCreationMode={chooseCreationMode}
+        taskType={taskType}
+        setTaskType={setTaskType}
+        targetTool={targetTool}
+        setTargetTool={setTargetTool}
+        contentScene={contentScene}
+        setContentScene={setContentScene}
+        artifactType={artifactType}
+        setArtifactType={setArtifactType}
+        contentTarget={contentTarget}
+        setContentTarget={setContentTarget}
       />
       <UpdateDialog
         open={updateDialogOpen}

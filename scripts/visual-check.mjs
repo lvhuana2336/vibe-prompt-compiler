@@ -36,6 +36,41 @@ const initialOverflow = await page.evaluate(
   () => document.documentElement.scrollWidth - window.innerWidth,
 );
 
+const contentPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+contentPage.setDefaultTimeout(12_000);
+await contentPage.goto(baseUrl, { waitUntil: "networkidle" });
+await contentPage.locator(".function-trigger").click();
+await contentPage.locator(".function-drawer").waitFor();
+const creationModeCount = await contentPage.locator(".creation-mode-grid button").count();
+await contentPage.getByRole("button", { name: /商务写作/ }).click();
+const artifactOptionsVisible = await contentPage.locator(".artifact-option-grid").isVisible();
+await contentPage
+  .locator(".artifact-option-grid button")
+  .filter({ hasText: "PPT 演示" })
+  .click();
+await contentPage.waitForTimeout(250);
+await contentPage.screenshot({
+  path: path.join(screenshotDir, "02b-function-drawer.png"),
+  fullPage: true,
+});
+await contentPage.locator(".function-drawer .primary-action").click();
+await contentPage.locator("textarea").fill(
+  "向管理层汇报第三季度项目进展，说明风险、负责人和下一步计划。",
+);
+await contentPage.locator(".compile-button").click();
+await contentPage.locator(".result-main").waitFor();
+const contentCategory = (
+  await contentPage.locator(".result-title-block > div > span").innerText()
+).trim();
+const contentPrompt = await contentPage.locator(".prompt-document pre").innerText();
+const contentOverflow = await contentPage.evaluate(
+  () => document.documentElement.scrollWidth - window.innerWidth,
+);
+await contentPage.screenshot({
+  path: path.join(screenshotDir, "03b-content-result.png"),
+  fullPage: true,
+});
+
 await page.locator("textarea").fill(
   "做一个记录每天喝水的小程序，界面清爽一点，能提醒我。",
 );
@@ -139,15 +174,15 @@ await page.screenshot({ path: path.join(screenshotDir, "05-mobile-result.png"), 
 const updatePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await updatePage.addInitScript(() => {
   window.yangouDesktop = {
-    getAppInfo: async () => ({ version: "0.2.2", platform: "win32", packaged: true }),
+    getAppInfo: async () => ({ version: "0.3.0", platform: "win32", packaged: true }),
     checkForUpdates: async () => ({
       status: "available",
-      currentVersion: "0.2.2",
-      latestVersion: "0.2.3",
+      currentVersion: "0.3.0",
+      latestVersion: "0.3.1",
       releaseUrl:
-        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/tag/v0.2.3",
+        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/tag/v0.3.1",
       downloadUrl:
-        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/download/v0.2.3/YanGou-Setup-0.2.3.exe",
+        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/download/v0.3.1/YanGou-Setup-0.3.1.exe",
       publishedAt: "2026-11-22T00:00:00Z",
       notes: "新增更新询问弹窗\n展示新版本改动与预计磁盘占用变化\n保留手动检查更新",
       storage: {
@@ -207,10 +242,10 @@ await updatePage.locator(".settings-drawer .icon-button").click();
 const updateFailurePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await updateFailurePage.addInitScript(() => {
   window.yangouDesktop = {
-    getAppInfo: async () => ({ version: "0.2.2", platform: "win32", packaged: true }),
+    getAppInfo: async () => ({ version: "0.3.0", platform: "win32", packaged: true }),
     checkForUpdates: async () => ({
       status: "error",
-      currentVersion: "0.2.2",
+      currentVersion: "0.3.0",
       message: "更新服务暂时不可用。",
     }),
     openRelease: async () => {},
@@ -233,6 +268,11 @@ console.log(
       heading,
       manifestHref,
       serviceWorkerState,
+      creationModeCount,
+      artifactOptionsVisible,
+      contentCategory,
+      contentPromptHasSlides: contentPrompt.includes("演讲备注"),
+      contentOverflow,
       resultTitle,
       initialOverflow,
       desktopOverflow,

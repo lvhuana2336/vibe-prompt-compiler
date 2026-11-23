@@ -1,6 +1,6 @@
 {
   "name": "yan-gou-vibe-prompt-compiler",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "把自然语言需求编译成可执行 vibecoding 提示词的 Windows 与 Android PWA 应用",
