@@ -14,7 +14,7 @@ import {
 } from "../shared/update-utils.mjs";
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const CACHE_SCHEMA_VERSION = 2;
+const CACHE_SCHEMA_VERSION = 3;
 
 export async function measureDirectoryBytes(directory) {
   const entries = await fs.readdir(directory, { withFileTypes: true });
@@ -90,7 +90,7 @@ export function createUpdateManager({
   }
 
   async function check({ manual = false } = {}) {
-    const currentVersion = app.getVersion();
+    const currentVersion = normalizeVersion(app.getVersion());
     if (!app.isPackaged) {
       return {
         status: "development",
@@ -103,6 +103,7 @@ export function createUpdateManager({
       const cached = await readCache();
       if (
         cached?.cacheSchemaVersion === CACHE_SCHEMA_VERSION &&
+        normalizeVersion(cached.currentVersion) === currentVersion &&
         now() - Number(cached.cachedAt || 0) < CACHE_TTL_MS
       ) {
         return { ...cached, cached: true };
@@ -123,7 +124,7 @@ export function createUpdateManager({
       }
 
       const release = await response.json();
-      const latestVersion = release.tag_name || release.name || "";
+      const latestVersion = normalizeVersion(release.tag_name || release.name || "");
       const hasUpdate = compareVersions(currentVersion, latestVersion) > 0;
       const installer = (release.assets || []).find(
         (asset) => /\.exe$/i.test(asset.name) && /setup/i.test(asset.name),

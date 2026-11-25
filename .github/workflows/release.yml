@@ -62,6 +62,7 @@ jobs:
         run: |
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           node scripts/write-release-metadata.mjs release/win-unpacked release/release-metadata.json $version
+          node scripts/release-notes.mjs release/release-notes.md
 
       - name: Upload build diagnostics
         if: failure()
@@ -81,6 +82,7 @@ jobs:
           path: |
             release/YanGou-Setup-*.exe
             release/release-metadata.json
+            release/release-notes.md
           if-no-files-found: error
 
       - name: Publish GitHub release
@@ -91,4 +93,5 @@ jobs:
           $assets = @(Get-ChildItem -LiteralPath release -Filter "YanGou-Setup-*.exe" | ForEach-Object FullName)
           $metadata = (Resolve-Path -LiteralPath release/release-metadata.json).Path
           $files = @($assets) + @($metadata)
-          gh release create $env:GITHUB_REF_NAME @files --title $env:GITHUB_REF_NAME --generate-notes
+          $notes = (Resolve-Path -LiteralPath release/release-notes.md).Path
+          gh release create $env:GITHUB_REF_NAME @files --title $env:GITHUB_REF_NAME --notes-file $notes

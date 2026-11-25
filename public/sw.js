@@ -1,4 +1,4 @@
-const CACHE_NAME = "yangou-v0.3.0";
+const CACHE_NAME = "yangou-v0.3.1";
 const APP_SHELL = ["", "index.html", "manifest.webmanifest", "favicon.svg", "icons/icon-192.png", "icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {

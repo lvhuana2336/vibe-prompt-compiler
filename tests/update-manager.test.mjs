@@ -69,7 +69,7 @@ test("更新检查返回改动说明、安装包与更新前后存储占用", as
     const result = await manager.check({ manual: true });
 
     assert.equal(result.status, "available");
-    assert.equal(result.latestVersion, "v0.2.2");
+    assert.equal(result.latestVersion, "0.2.2");
     assert.match(result.notes, /更新询问弹窗/);
     assert.deepEqual(result.storage, {
       currentBytes: 200,
@@ -83,6 +83,58 @@ test("更新检查返回改动说明、安装包与更新前后存储占用", as
       METADATA_URL,
     ]);
     assert.equal(await measureDirectoryBytes(installDirectory), 200);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("自动检查不会复用其他应用版本留下的缓存", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "yangou-update-cache-"));
+  const cacheDirectory = path.join(root, "cache");
+  await fs.mkdir(cacheDirectory, { recursive: true });
+  await fs.writeFile(
+    path.join(cacheDirectory, "update-check.json"),
+    JSON.stringify({
+      cacheSchemaVersion: 3,
+      cachedAt: Date.parse("2026-11-23T01:00:00Z"),
+      currentVersion: "0.2.2",
+      status: "available",
+      latestVersion: "0.3.0",
+    }),
+  );
+  const requestedUrls = [];
+
+  try {
+    const manager = createUpdateManager({
+      app: {
+        isPackaged: true,
+        getVersion: () => "0.3.0",
+        getPath: (name) => {
+          if (name === "userData") return cacheDirectory;
+          if (name === "exe") return path.join(root, "install", "言构.exe");
+          throw new Error(`Unexpected path: ${name}`);
+        },
+      },
+      shell: { openExternal: async () => {} },
+      fetchImpl: async (url) => {
+        requestedUrls.push(String(url));
+        return Response.json({
+          tag_name: "vv0.3.1",
+          html_url:
+            "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/tag/v0.3.1",
+          body: "## 中文更新说明\n\n- 修复版本缓存",
+          assets: [],
+        });
+      },
+      now: () => Date.parse("2026-11-23T02:00:00Z"),
+    });
+
+    const result = await manager.check();
+    assert.equal(result.currentVersion, "0.3.0");
+    assert.equal(result.latestVersion, "0.3.1");
+    assert.equal(result.status, "available");
+    assert.match(result.notes, /中文更新说明/);
+    assert.equal(requestedUrls.length, 1);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

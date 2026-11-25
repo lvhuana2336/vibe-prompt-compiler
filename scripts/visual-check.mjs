@@ -174,15 +174,15 @@ await page.screenshot({ path: path.join(screenshotDir, "05-mobile-result.png"), 
 const updatePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await updatePage.addInitScript(() => {
   window.yangouDesktop = {
-    getAppInfo: async () => ({ version: "0.3.0", platform: "win32", packaged: true }),
+    getAppInfo: async () => ({ version: "0.3.1", platform: "win32", packaged: true }),
     checkForUpdates: async () => ({
       status: "available",
-      currentVersion: "0.3.0",
-      latestVersion: "0.3.1",
+      currentVersion: "0.3.1",
+      latestVersion: "0.3.2",
       releaseUrl:
-        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/tag/v0.3.1",
+        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/tag/v0.3.2",
       downloadUrl:
-        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/download/v0.3.1/YanGou-Setup-0.3.1.exe",
+        "https://github.com/lvhuana2336/vibe-prompt-compiler/releases/download/v0.3.2/YanGou-Setup-0.3.2.exe",
       publishedAt: "2026-11-22T00:00:00Z",
       notes: "新增更新询问弹窗\n展示新版本改动与预计磁盘占用变化\n保留手动检查更新",
       storage: {
@@ -205,6 +205,11 @@ const updateNotesVisible = (await updatePage.locator(".update-notes").innerText(
 const updateStorageVisible = (await updatePage.locator(".storage-comparison").innerText()).includes(
   "更新前",
 );
+const updateVersionText = await updatePage.locator(".update-version-route").innerText();
+const normalizedUpdateVersions =
+  !updateVersionText.includes("vv") &&
+  updateVersionText.includes("v0.3.1") &&
+  updateVersionText.includes("v0.3.2");
 await updatePage.waitForTimeout(350);
 await updatePage.screenshot({ path: path.join(screenshotDir, "06-update-dialog.png"), fullPage: true });
 await updatePage.locator(".update-later-button").click();
@@ -242,10 +247,10 @@ await updatePage.locator(".settings-drawer .icon-button").click();
 const updateFailurePage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 await updateFailurePage.addInitScript(() => {
   window.yangouDesktop = {
-    getAppInfo: async () => ({ version: "0.3.0", platform: "win32", packaged: true }),
+    getAppInfo: async () => ({ version: "0.3.1", platform: "win32", packaged: true }),
     checkForUpdates: async () => ({
       status: "error",
-      currentVersion: "0.3.0",
+      currentVersion: "0.3.1",
       message: "更新服务暂时不可用。",
     }),
     openRelease: async () => {},
@@ -298,6 +303,7 @@ console.log(
       autoUpdateDialogVisible,
       updateNotesVisible,
       updateStorageVisible,
+      normalizedUpdateVersions,
       automaticUpdateEnabled,
       automaticUpdateDisabled,
       automaticUpdateDialogDisabled,

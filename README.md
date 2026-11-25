@@ -46,6 +46,7 @@
 | 本地历史 | 桌面版使用用户数据文件持久化，支持上限、开关、备份恢复和 JSON 导入导出 |
 | 桌面交付 | Windows 安装包内置运行时，不要求用户另装 Node.js |
 | 更新检查 | Windows 启动后自动检查新版本，也可在设置中手动检查 |
+| 更新说明 | 从中文 CHANGELOG 生成 Release Notes，弹窗中清理 Markdown 后展示 |
 | 中转站诊断 | 自动规范化 Base URL，检测密钥、模型列表和兼容协议 |
 | Android 准备 | 可安装 PWA、离线应用壳与 Capacitor Android 工程底座 |
 

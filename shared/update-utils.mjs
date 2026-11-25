@@ -7,7 +7,7 @@ export const RELEASE_METADATA_ASSET_NAME = "release-metadata.json";
 export function normalizeVersion(value) {
   return String(value || "")
     .trim()
-    .replace(/^v/i, "")
+    .replace(/^v+/i, "")
     .split("-")[0];
 }
 
@@ -27,6 +27,12 @@ export function compareVersions(current, candidate) {
 export function sanitizeReleaseNotes(value, maxLength = 1200) {
   return String(value || "")
     .replace(/\r/g, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/^[-*]\s+/gm, "• ")
+    .replace(/^\s*Full Changelog\s*:?\s*https?:\/\/\S+\s*$/gim, "")
     .replace(/[^\S\n]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim()

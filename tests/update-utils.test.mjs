@@ -15,11 +15,28 @@ test("更新版本比较支持 v 前缀和多段版本", () => {
   assert.equal(compareVersions("2.0.0", "v2.0.0"), 0);
   assert.equal(compareVersions("2.1.0", "2.0.9"), -1);
   assert.equal(normalizeVersion("v0.2.0-beta.1"), "0.2.0");
+  assert.equal(normalizeVersion("vv0.3.0"), "0.3.0");
 });
 
 test("Release 说明会压缩空白并限制长度", () => {
   const notes = sanitizeReleaseNotes("  新增更新检查\n\n\n\n修复连接  ", 10);
   assert.equal(notes, "新增更新检查\n\n修复");
+});
+
+test("Release 中文说明会清理 Markdown 并移除自动摘要", () => {
+  const notes = sanitizeReleaseNotes(`## v0.3.1 更新内容
+
+### Fixed
+
+- **修复版本缓存**：[查看详情](https://example.com)
+- 保留中文说明
+
+**Full Changelog**: https://github.com/example/compare/v0.3.0...v0.3.1`);
+
+  assert.match(notes, /v0\.3\.1 更新内容/);
+  assert.match(notes, /• 修复版本缓存：查看详情/);
+  assert.match(notes, /• 保留中文说明/);
+  assert.doesNotMatch(notes, /Full Changelog|https:\/\/example\.com/);
 });
 
 test("Release 元数据只接受有效的安装体积", () => {
